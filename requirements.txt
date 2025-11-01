@@ -1,0 +1,13 @@
+uvicorn[standard]
+boto3
+pandas
+requests
+fastapi
+google-generativeai
+python-dotenv
+deepgram-sdk
+torchaudio
+python-multipart
+google-api-python-client
+google-auth-oauthlib
+peft

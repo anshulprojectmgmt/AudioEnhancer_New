@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# App Data (NEVER commit this)
+Data/
+final_local_videos/
+
+# OS
+.DS_Store
