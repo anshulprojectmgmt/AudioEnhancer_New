@@ -7,7 +7,7 @@ TMP_DIR = "./Data/tmp"
 
 # Max age in seconds (e.g., 7 days)
 # 7 days * 24 hours/day * 60 minutes/hour * 60 seconds/minute
-MAX_AGE_SECONDS = 7 * 24 * 60 * 60 
+MAX_AGE_SECONDS = 1 * 24 * 60 * 60 
 
 def cleanup():
     now = time.time()
