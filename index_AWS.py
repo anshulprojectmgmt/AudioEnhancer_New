@@ -636,7 +636,7 @@ async def refresh_voiceover(sheetId: str): # <--- API Contract: Uses query param
                 if refined and clonevoice.lower() == "yes":
                     logger.info(f"[RunPod] Generating new audio for segment {idx}.")
                     task = asyncio.create_task(
-                        call_runpod_tts(session, semaphore, text_to_speak=refined, ref_audio_path=ref_audio_path, output_path=output_audio_path, segment_index=idx)
+                        call_runpod_tts(session, semaphore, text=refined, ref_audio_path=ref_audio_path, output_path=output_audio_path, segment_index=idx)
                     )
                     tasks.append(task)
                 
