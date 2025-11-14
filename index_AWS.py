@@ -726,10 +726,7 @@ async def refresh_voiceover(sheetId: str): # <--- API Contract: Uses query param
         log_performance("Google Sheet Update", t4)
 
         # --- Upload final files ---
-        t5 = time.time()
-        upload_file(processed_path, f"Final_videos/{filename}")
-        upload_file(final_audio_path, f"Final_audio/{uid}.wav")
-        log_performance("Upload Final Assets to S3", t5)
+        
       
         # # --- Save Final Video Locally ---
         # t6 = time.time()
@@ -743,8 +740,27 @@ async def refresh_voiceover(sheetId: str): # <--- API Contract: Uses query param
         #     logger.error(f"Failed to save final video locally: {e_copy}")
         # log_performance("Save Final Video Locally", t6)
         
+        t5 = time.time()
+        
+        # ✅ FIX: Capture the upload result to get the URL
+        final_video_upload_result = upload_file(processed_path, f"Final_videos/{filename}")
+        final_audio_upload_result = upload_file(final_audio_path, f"Final_audio/{uid}.wav")
+        
+        # ✅ FIX: Extract the URL from the upload result
+        final_s3_url = final_video_upload_result["url"]
+        
+        logger.info(f"Final video uploaded to: {final_s3_url}")
+        log_performance("Upload Final Assets to S3", t5)
+        
         log_performance("Total /refresh-voiceover", t_start)
-        return JSONResponse({"message": "Refresh completed successfully", "processed_video": filename})
+        
+        # ✅ FIX: Return the URL that frontend expects
+        return JSONResponse({
+            "message": "Refresh completed successfully", 
+            "processed_video": filename,
+            "Final_s3_url": final_s3_url  # ← Frontend needs this!
+        })
+
 
     except Exception as e:
         logger.exception("Error in /refresh-voiceover endpoint")
