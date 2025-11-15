@@ -281,7 +281,7 @@ def process_segments_with_ffmpeg(segments, input_path, output_path, ass_path, tm
     
     final_filter = f"{';'.join(video_filters + [video_concat_filter])}{ass_filter_str if map_video_output == '[vout]' else ''}"
 
-    final_cmd = ["ffmpeg", "-y", *chain.from_iterable([["-i", p] for p in video_inputs]), "-i", tmp_audio, "-filter_complex", final_filter, "-map", map_video_output, "-map", f"{len(video_inputs)}:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", output_path]
+    final_cmd = ["ffmpeg", "-y", *chain.from_iterable([["-i", p] for p in video_inputs]), "-i", tmp_audio, "-filter_complex", final_filter, "-map", map_video_output, "-map", f"{len(video_inputs)}:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", output_path]
     run_ffmpeg(final_cmd, "Final Video Composition")
     log_performance("FFmpeg - Final Video Composition", t2)
     return output_path, tmp_audio
