@@ -40,7 +40,7 @@ logger.info(f"Initial RAM Usage: {INITIAL_MEMORY:.2f} MB")
 # =========================================================================================================
 RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY") # Make sure this is in your .env file
 RUNPOD_ENDPOINT_URL = os.getenv("RUNPOD_ENDPOINT_URL") # Make sure this is in your .env file (the /runsync URL)
-MAX_CONCURRENT_RUNPOD_REQUESTS = 6 # Control how many requests hit RunPod simultaneously (adjust as needed for cost/speed)
+MAX_CONCURRENT_RUNPOD_REQUESTS = 3 # Control how many requests hit RunPod simultaneously (adjust as needed for cost/speed)
 
 if not RUNPOD_API_KEY:
     logger.error("RUNPOD_API_KEY not found in environment variables.")
