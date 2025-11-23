@@ -40,7 +40,7 @@ logger.info(f"Initial RAM Usage: {INITIAL_MEMORY:.2f} MB")
 # =========================================================================================================
 RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY") # Make sure this is in your .env file
 RUNPOD_ENDPOINT_URL = os.getenv("RUNPOD_ENDPOINT_URL") # Make sure this is in your .env file (the /runsync URL)
-MAX_CONCURRENT_RUNPOD_REQUESTS = 3 # Control how many requests hit RunPod simultaneously (adjust as needed for cost/speed)
+MAX_CONCURRENT_RUNPOD_REQUESTS = 5 # Control how many requests hit RunPod simultaneously (adjust as needed for cost/speed)
 
 if not RUNPOD_API_KEY:
     logger.error("RUNPOD_API_KEY not found in environment variables.")
@@ -943,22 +943,66 @@ async def refresh_voiceover(sheetId: str):
         rows = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='A2:L').execute().get('values', [])
         
         # --- RunPod TTS Generation (Concurrent with Caching) ---
+        # if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
+        #      raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
+             
+        # tasks = []
+        # semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNPOD_REQUESTS)
+        
+        # async with aiohttp.ClientSession() as session:
+        #     for idx, row in enumerate(rows):
+        #         while len(row) <= 10: row.append("") 
+        #         refined = row[5]
+        #         pause = row[6] if row[6] else '0'
+        #         clonevoice = row[10] if row[10] else 'yes'
+                
+        #         # --- Path to the segment's audio file ---
+        #         output_audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
+
+        #         unchanged = False
+        #         if idx in prev_state:
+        #             prev = prev_state[idx]
+        #             unchanged = (str(refined) == str(prev['refined']) and 
+        #                          str(pause) == str(prev['pause']) and 
+        #                          str(clonevoice) == str(prev.get('CloneVoice', 'yes')))
+
+        #         if unchanged:
+        #             logger.info(f"[Cache] Segment {idx} is UNCHANGED. Skipping.")
+        #             continue 
+
+        #         # --- If we are here, the segment has CHANGED ---
+        #         logger.info(f"[Cache] Segment {idx} is NEW or CHANGED.")
+
+        #         if os.path.exists(output_audio_path):
+        #             logger.info(f"Deleting stale audio file: {output_audio_path}")
+        #             os.remove(output_audio_path)
+
+        #         if refined and clonevoice.lower() == "yes":
+        #             logger.info(f"[RunPod] Generating new audio for segment {idx}.")
+        #             # +++ FIX: Pass the pre-encoded 'ref_audio_b64' string here +++
+        #             task = asyncio.create_task(
+        #                 call_runpod_tts(session, semaphore, text=refined, ref_audio_b64=ref_audio_b64, output_path=output_audio_path, segment_index=idx)
+        #             )
+        #             tasks.append(task)
+        # --- RunPod TTS Generation (Batched & Concurrent) ---
         if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
              raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
              
-        tasks = []
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNPOD_REQUESTS)
         
         async with aiohttp.ClientSession() as session:
+            pending_tasks = []
+            
+            # 1. PREPARE TASKS (Do not run them yet)
             for idx, row in enumerate(rows):
                 while len(row) <= 10: row.append("") 
                 refined = row[5]
                 pause = row[6] if row[6] else '0'
                 clonevoice = row[10] if row[10] else 'yes'
                 
-                # --- Path to the segment's audio file ---
                 output_audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
 
+                # Check Cache
                 unchanged = False
                 if idx in prev_state:
                     prev = prev_state[idx]
@@ -970,20 +1014,34 @@ async def refresh_voiceover(sheetId: str):
                     logger.info(f"[Cache] Segment {idx} is UNCHANGED. Skipping.")
                     continue 
 
-                # --- If we are here, the segment has CHANGED ---
                 logger.info(f"[Cache] Segment {idx} is NEW or CHANGED.")
 
                 if os.path.exists(output_audio_path):
-                    logger.info(f"Deleting stale audio file: {output_audio_path}")
                     os.remove(output_audio_path)
 
                 if refined and clonevoice.lower() == "yes":
-                    logger.info(f"[RunPod] Generating new audio for segment {idx}.")
-                    # +++ FIX: Pass the pre-encoded 'ref_audio_b64' string here +++
-                    task = asyncio.create_task(
-                        call_runpod_tts(session, semaphore, text=refined, ref_audio_b64=ref_audio_b64, output_path=output_audio_path, segment_index=idx)
-                    )
-                    tasks.append(task)
+                    # Create the coroutine object, but do not await it yet
+                    task = call_runpod_tts(session, semaphore, text=refined, ref_audio_b64=ref_audio_b64, output_path=output_audio_path, segment_index=idx)
+                    pending_tasks.append(task)
+            
+            # 2. EXECUTE IN BATCHES (Prevents Memory Spikes)
+            BATCH_SIZE = 5
+            total_tasks = len(pending_tasks)
+            logger.info(f"Queued {total_tasks} tasks. Processing in batches of {BATCH_SIZE}...")
+
+            for i in range(0, total_tasks, BATCH_SIZE):
+                batch = pending_tasks[i : i + BATCH_SIZE]
+                logger.info(f"--- Processing Batch {i//BATCH_SIZE + 1} ({len(batch)} tasks) ---")
+                
+                # Run this batch and wait for it to finish
+                results = await asyncio.gather(*batch)
+                
+                # Count successes in this batch
+                success_count = sum(1 for res in results if res is True)
+                logger.info(f"Batch {i//BATCH_SIZE + 1} complete. Success: {success_count}/{len(batch)}")
+                
+                # CRITICAL: Force memory cleanup after every batch
+                gc.collect()
                 
 
             logger.info(f"Starting {len(tasks)} RunPod TTS generations...")
