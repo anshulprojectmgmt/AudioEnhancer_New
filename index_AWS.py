@@ -1129,13 +1129,32 @@ async def refresh_voiceover(sheetId: str):
         log_performance("Google Sheet Update", t4)
 
         # --- Upload final files ---
+        t# --- Upload final files ---
         t5 = time.time()
-        upload_file(processed_path, f"Final_videos/{filename}")
+        final_video_key = f"Final_videos/{filename}"
+        upload_file(processed_path, final_video_key)
         upload_file(final_audio_path, f"Final_audio/{uid}.wav")
         log_performance("Upload Final Assets to S3", t5)
         
+        # --- GENERATE PRESIGNED URL FOR FRONTEND ---
+        try:
+            final_s3_url = s3.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': S3_BUCKET, 'Key': final_video_key},
+                ExpiresIn=3600 # Valid for 1 hour
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate presigned URL: {e}")
+            final_s3_url = ""
+
         log_performance("Total /refresh-voiceover", t_start)
-        return JSONResponse({"message": "Refresh completed successfully", "processed_video": filename})
+        
+        # ✅ FIX: Return the URL that frontend expects
+        return JSONResponse({
+            "message": "Refresh completed successfully", 
+            "processed_video": filename,
+            "Final_s3_url": final_s3_url  # <--- Included now!
+        })
 
     except Exception as e:
         logger.exception("Error in /refresh-voiceover endpoint")
