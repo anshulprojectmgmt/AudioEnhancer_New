@@ -1129,7 +1129,7 @@ async def refresh_voiceover(sheetId: str):
         log_performance("Google Sheet Update", t4)
 
         # --- Upload final files ---
-        t# --- Upload final files ---
+        # --- Upload final files ---
         t5 = time.time()
         final_video_key = f"Final_videos/{filename}"
         upload_file(processed_path, final_video_key)
@@ -1148,7 +1148,7 @@ async def refresh_voiceover(sheetId: str):
             final_s3_url = ""
             
         logger.info(f"\n{'='*60}")
-        logger.info(f"✅ FINAL S3 URL SENT TO FRONTEND:")
+        logger.info(f"FINAL S3 URL SENT TO FRONTEND:")
         logger.info(f"{final_s3_url}")
         logger.info(f"{'='*60}\n")
 
