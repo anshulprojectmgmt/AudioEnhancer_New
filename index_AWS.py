@@ -604,8 +604,271 @@ async def process_video(file: UploadFile = File(...)):
 # =========================================================================================================
 #                    ENDPOINT 2: /refresh-voiceover <--- MAJOR CHANGES HERE
 # =========================================================================================================
+# # @app.post("/refresh-voiceover")
+# # async def refresh_voiceover(sheetId: str): # <--- API Contract: Uses query parameter
+# #     t_start = time.time()
+# #     local_dir = None
+    
+# #     # --- CORRECTED: Initialize paths to None for robust cleanup ---
+# #     local_video_path = None
+# #     final_video_path = None
+# #     final_audio_path = None
+# #     ass_path = None
+# #     state_csv_path = None # Also initialize this for safety
+
+# #     try:
+# #         t0 = time.time()
+# #         # --- Setup: Get filename, create directories ---
+# #         try:
+# #             filename_resp = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='M1').execute()
+# #             filename = filename_resp['values'][0][0]
+# #         except (HttpError, KeyError, IndexError):
+# #             raise HTTPException(status_code=400, detail="Could not retrieve filename from sheet cell M1.")
+
+# #         uid = filename.split('_')[-1].split('.')[0]
+# #         local_dir = f"./Data/tmp/{uid}"
+# #         os.makedirs(local_dir, exist_ok=True)
+        
+# #         # --- Assign paths ---
+# #         local_video_path = os.path.join(local_dir, filename)
+# #         cloned_audio_dir = os.path.join(local_dir, "cloned")
+# #         os.makedirs(cloned_audio_dir, exist_ok=True)
+# #         ass_path = os.path.join(local_dir, "captions.ass")
+# #         state_csv_path = os.path.join(local_dir, "state.csv") # <-- Assign state path
+            
+# #         download_file(f"Original_videos/{filename}", local_video_path)
+# #         log_performance("Setup & Download", t0)
+        
+# #         # +++ THIS BLOCK WAS MISSING +++
+# #         # --- Reference Audio (Use a short clip!) ---
+# #         # ⚠️ IMPORTANT: Update this path to your short reference audio clip
+# #         base_dir = os.path.abspath(os.path.dirname(__file__))
+# #         ref_audio_path = os.path.join(base_dir, "reference_audio.wav") # Assumes Trump-1.wav is in the same folder
+        
+# #         if not os.path.exists(ref_audio_path):
+# #             logger.error(f"FATAL: Reference audio not found at {ref_audio_path}")
+# #             raise HTTPException(status_code=500, detail="Reference audio file is missing from the server.")
+# #         # +++ END OF MISSING BLOCK +++
+
+# #         # +++ START CACHING LOGIC +++
+# #         prev_state = {}
+# #         if os.path.exists(state_csv_path):
+# #             logger.info(f"Loading state from {state_csv_path}")
+# #             try:
+# #                 df = pandas.read_csv(state_csv_path)
+# #                 for _, row in df.iterrows():
+# #                     idx = int(row['Index'])
+# #                     prev_state[idx] = {
+# #                         'refined': str(row['Refined']),
+# #                         'pause': str(row['Pause']),
+# #                         'CloneVoice': str(row.get('CloneVoice', 'yes'))  
+# #                     }
+# #             except Exception as e:
+# #                 logger.error(f"Error loading state CSV: {e}")
+# #         # +++ END CACHING LOGIC +++
+
+# #         t1 = time.time()
+# #         rows = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='A2:L').execute().get('values', [])
+        
+# #         # --- RunPod TTS Generation (Concurrent with Caching) ---
+# #         if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
+# #              raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
+             
+# #         tasks = []
+# #         semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNPOD_REQUESTS)
+        
+# #         async with aiohttp.ClientSession() as session:
+# #             for idx, row in enumerate(rows):
+# #                 while len(row) <= 10: row.append("") 
+# #                 refined = row[5]
+# #                 pause = row[6] if row[6] else '0'
+# #                 clonevoice = row[10] if row[10] else 'yes'
+                
+# #                 # --- Path to the segment's audio file ---
+# #                 output_audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
+
+# #                 unchanged = False
+# #                 if idx in prev_state:
+# #                     prev = prev_state[idx]
+# #                     unchanged = (str(refined) == str(prev['refined']) and 
+# #                                  str(pause) == str(prev['pause']) and 
+# #                                  str(clonevoice) == str(prev.get('CloneVoice', 'yes')))
+
+# #                 if unchanged:
+# #                     logger.info(f"[Cache] Segment {idx} is UNCHANGED. Skipping.")
+# #                     continue # <-- Skip to the next loop iteration
+
+# #                 # --- If we are here, the segment has CHANGED ---
+# #                 logger.info(f"[Cache] Segment {idx} is NEW or CHANGED.")
+
+# #                 # +++ THE FIX +++
+# #                 # Delete the old, stale audio file, no matter what.
+# #                 # This forces the code to re-generate or re-extract it.
+# #                 if os.path.exists(output_audio_path):
+# #                     logger.info(f"Deleting stale audio file: {output_audio_path}")
+# #                     os.remove(output_audio_path)
+# #                 # +++ END OF FIX +++
+
+# #                 if refined and clonevoice.lower() == "yes":
+# #                     logger.info(f"[RunPod] Generating new audio for segment {idx}.")
+# #                     task = asyncio.create_task(
+# #                         call_runpod_tts(session, semaphore, text=refined, ref_audio_path=ref_audio_path, output_path=output_audio_path, segment_index=idx)
+# #                     )
+# #                     tasks.append(task)
+                
+
+# #             logger.info(f"Starting {len(tasks)} RunPod TTS generations...")
+# #             results = await asyncio.gather(*tasks)
+# #             successful_tasks = sum(1 for res in results if res is True)
+# #             failed_tasks = len(tasks) - successful_tasks
+# #             logger.info(f"RunPod TTS generation complete. Success: {successful_tasks}, Failed: {failed_tasks}")
+# #             if failed_tasks > 0:
+# #                  logger.error(f"{failed_tasks} TTS segments failed to generate via RunPod.")
+        
+# #         log_performance("RunPod TTS Generation (Concurrent)", t1)
+        
+# #         # --- Timestamp calculation and segment processing ---
+# #         t2 = time.time()
+# #         segments = []
+# #         current_new_start = 0.0
+# #         for idx, row in enumerate(rows):
+# #             try:
+# #                 while len(row) <= 10: row.append("") 
+# #                 start = float(row[0]) if row[0] else 0.0
+# #                 end = float(row[1]) if row[1] else start
+# #                 refined = row[5]
+# #                 pause = float(row[6]) if row[6] else 0.0
+# #                 clone_voice = row[10]
+# #                 video_len = max(0, end - start)
+# #                 audio_path = None
+# #                 factor = 1.0
+# #                 audio_len_sec = video_len
+
+# #                 if clone_voice.lower() == "no":
+# #                     audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
+# #                     if not os.path.exists(audio_path) and video_len > 0:
+# #                          run_ffmpeg(["ffmpeg", "-y", "-ss", str(start), "-i", local_video_path, "-t", str(video_len), "-q:a", "0", "-map", "a", audio_path], f"Audio Extraction for seg {idx}")
+# #                     elif not os.path.exists(audio_path) and video_len <= 0:
+# #                          run_ffmpeg(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "0.01", "-acodec", "pcm_s16le", audio_path], f"Silent Audio for seg {idx}")
+                         
+# #                 elif refined:
+# #                     audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
+# #                     if os.path.exists(audio_path):
+# #                         audio_len_sec = get_media_duration(audio_path) + pause
+# #                         if audio_len_sec > 0 and video_len > 0:
+# #                             factor = min(video_len / audio_len_sec, 2.0)
+# #                         elif video_len <= 0:
+# #                              factor = float('inf')
+# #                              audio_len_sec = 0
+# #                     else:
+# #                         logger.warning(f"Cloned audio for seg {idx} not found. Using original timing.")
+# #                         audio_len_sec = video_len
+
+# #                 segment_duration = (video_len / factor) if factor > 0 and factor != float('inf') else 0.0
+# #                 new_end = current_new_start + segment_duration
+# #                 row[2], row[3] = f"{current_new_start:.3f}", f"{new_end:.3f}"
+# #                 current_new_start = new_end
+# #                 row[7] = f"{audio_len_sec:.3f}"
+# #                 row[8] = f"{video_len:.3f}"
+# #                 segments.append({"start": start, "end": end, "factor": factor, "audio_path": audio_path, "path": local_video_path})
+# #             except (ValueError, IndexError, TypeError) as e:
+# #                 logger.warning(f"Skipping malformed row {idx+2} during segment processing: {row} | Error: {e}")
+
+# #         log_performance("Timestamp Calculation", t2)
+        
+# #         # --- Save current state to CSV ---
+# #         state_data = []
+# #         for idx, row in enumerate(rows):
+# #             state_data.append({
+# #                 "Index": idx,
+# #                 "Refined": row[5] if len(row) > 5 else "",
+# #                 "Pause": row[6] if len(row) > 6 else "0",
+# #                 "CloneVoice": row[10] if len(row) > 10 else "yes"  
+# #             })
+# #         state_df = pandas.DataFrame(state_data)
+# #         logger.info(f"Saving new state to {state_csv_path}")
+# #         state_df.to_csv(state_csv_path, index=False)
+        
+# #         # --- Final video/audio processing ---
+# #         t3 = time.time()
+# #         final_video_path = os.path.join(local_dir, f"final_{filename}") # <--- Assignment
+# #         processed_path, final_audio_path = process_segments_with_ffmpeg(segments, local_video_path, final_video_path, ass_path, local_dir) # <--- Assignment
+# #         log_performance("Final Video/Audio Processing", t3)
+
+# #         # --- Update Google Sheet ---
+# #         t4 = time.time()
+# #         rows_str = [[str(cell) for cell in r] for r in rows]
+# #         sheets_service.spreadsheets().values().update(spreadsheetId=sheetId, range='A2', valueInputOption='RAW', body={'values': rows_str}).execute()
+# #         log_performance("Google Sheet Update", t4)
+
+# #         # --- Upload final files ---
+        
+      
+# #         # # --- Save Final Video Locally ---
+# #         # t6 = time.time()
+# #         # local_save_dir = "./final_local_videos" 
+# #         # os.makedirs(local_save_dir, exist_ok=True)
+# #         # local_final_path = os.path.join(local_save_dir, f"LOCAL_{filename}")
+# #         # try:
+# #         #     shutil.copy2(processed_path, local_final_path)
+# #         #     logger.info(f"Successfully saved final video locally to: {local_final_path}")
+# #         # except Exception as e_copy:
+# #         #     logger.error(f"Failed to save final video locally: {e_copy}")
+# #         # log_performance("Save Final Video Locally", t6)
+        
+# #         t5 = time.time()
+        
+# #         # ✅ FIX: Capture the upload result to get the URL
+# #         final_video_upload_result = upload_file(processed_path, f"Final_videos/{filename}")
+# #         final_audio_upload_result = upload_file(final_audio_path, f"Final_audio/{uid}.wav")
+        
+# #         # ✅ FIX: Extract the URL from the upload result
+# #         final_s3_url = final_video_upload_result["url"]
+        
+# #         logger.info(f"Final video uploaded to: {final_s3_url}")
+# #         log_performance("Upload Final Assets to S3", t5)
+        
+# #         log_performance("Total /refresh-voiceover", t_start)
+        
+# #         # ✅ FIX: Return the URL that frontend expects
+# #         return JSONResponse({
+# #             "message": "Refresh completed successfully", 
+# #             "processed_video": filename,
+# #             "Final_s3_url": final_s3_url  # ← Frontend needs this!
+# #         })
+
+
+# #     except Exception as e:
+# #         logger.exception("Error in /refresh-voiceover endpoint")
+# #         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    
+# #     finally:
+# #         # --- CORRECTED, ROBUST selective cleanup ---
+# #         logger.info("Starting selective cleanup...")
+# #         try:
+# #             files_to_delete = [
+# #                 local_video_path,   # The downloaded original video
+# #                 final_video_path,   # The generated final video
+# #                 final_audio_path,   # The stitched final audio
+# #                 ass_path            # The generated caption file
+# #             ]
+            
+# #             for f_path in files_to_delete:
+# #                 # Check if variable was assigned AND file exists
+# #                 if f_path and os.path.exists(f_path):
+# #                     os.remove(f_path)
+# #                     logger.info(f"Cleaned up temp file: {f_path}")
+            
+# #             # We INTENTIONALLY DO NOT delete:
+# #             # - local_dir (the main folder)
+# #             # - state_csv_path (the cache state)
+# #             # - cloned_audio_dir (the cached .wav files)
+
+# #         except Exception as e:
+# #             logger.error(f"Error during selective cleanup: {e}")
+
 # @app.post("/refresh-voiceover")
-# async def refresh_voiceover(sheetId: str): # <--- API Contract: Uses query parameter
+# async def refresh_voiceover(sheetId: str): 
 #     t_start = time.time()
 #     local_dir = None
     
@@ -614,7 +877,7 @@ async def process_video(file: UploadFile = File(...)):
 #     final_video_path = None
 #     final_audio_path = None
 #     ass_path = None
-#     state_csv_path = None # Also initialize this for safety
+#     state_csv_path = None 
 
 #     try:
 #         t0 = time.time()
@@ -634,21 +897,30 @@ async def process_video(file: UploadFile = File(...)):
 #         cloned_audio_dir = os.path.join(local_dir, "cloned")
 #         os.makedirs(cloned_audio_dir, exist_ok=True)
 #         ass_path = os.path.join(local_dir, "captions.ass")
-#         state_csv_path = os.path.join(local_dir, "state.csv") # <-- Assign state path
+#         state_csv_path = os.path.join(local_dir, "state.csv") 
             
 #         download_file(f"Original_videos/{filename}", local_video_path)
 #         log_performance("Setup & Download", t0)
         
-#         # +++ THIS BLOCK WAS MISSING +++
 #         # --- Reference Audio (Use a short clip!) ---
-#         # ⚠️ IMPORTANT: Update this path to your short reference audio clip
 #         base_dir = os.path.abspath(os.path.dirname(__file__))
-#         ref_audio_path = os.path.join(base_dir, "reference_audio.wav") # Assumes Trump-1.wav is in the same folder
+#         ref_audio_path = os.path.join(base_dir, "reference_audio.wav") 
         
 #         if not os.path.exists(ref_audio_path):
 #             logger.error(f"FATAL: Reference audio not found at {ref_audio_path}")
 #             raise HTTPException(status_code=500, detail="Reference audio file is missing from the server.")
-#         # +++ END OF MISSING BLOCK +++
+        
+#         # +++ FIX START: Encode Audio ONCE here +++
+#         ref_audio_b64 = ""
+#         try:
+#             with open(ref_audio_path, 'rb') as audio_file:
+#                 audio_bytes = audio_file.read()
+#                 ref_audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+#             logger.info("Reference audio encoded successfully (Once).")
+#         except Exception as e:
+#             logger.error(f"Failed to encode reference audio: {e}")
+#             raise HTTPException(status_code=500, detail=f"Failed to encode reference audio: {e}")
+#         # +++ FIX END +++
 
 #         # +++ START CACHING LOGIC +++
 #         prev_state = {}
@@ -671,22 +943,66 @@ async def process_video(file: UploadFile = File(...)):
 #         rows = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='A2:L').execute().get('values', [])
         
 #         # --- RunPod TTS Generation (Concurrent with Caching) ---
+#         # if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
+#         #      raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
+             
+#         # tasks = []
+#         # semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNPOD_REQUESTS)
+        
+#         # async with aiohttp.ClientSession() as session:
+#         #     for idx, row in enumerate(rows):
+#         #         while len(row) <= 10: row.append("") 
+#         #         refined = row[5]
+#         #         pause = row[6] if row[6] else '0'
+#         #         clonevoice = row[10] if row[10] else 'yes'
+                
+#         #         # --- Path to the segment's audio file ---
+#         #         output_audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
+
+#         #         unchanged = False
+#         #         if idx in prev_state:
+#         #             prev = prev_state[idx]
+#         #             unchanged = (str(refined) == str(prev['refined']) and 
+#         #                          str(pause) == str(prev['pause']) and 
+#         #                          str(clonevoice) == str(prev.get('CloneVoice', 'yes')))
+
+#         #         if unchanged:
+#         #             logger.info(f"[Cache] Segment {idx} is UNCHANGED. Skipping.")
+#         #             continue 
+
+#         #         # --- If we are here, the segment has CHANGED ---
+#         #         logger.info(f"[Cache] Segment {idx} is NEW or CHANGED.")
+
+#         #         if os.path.exists(output_audio_path):
+#         #             logger.info(f"Deleting stale audio file: {output_audio_path}")
+#         #             os.remove(output_audio_path)
+
+#         #         if refined and clonevoice.lower() == "yes":
+#         #             logger.info(f"[RunPod] Generating new audio for segment {idx}.")
+#         #             # +++ FIX: Pass the pre-encoded 'ref_audio_b64' string here +++
+#         #             task = asyncio.create_task(
+#         #                 call_runpod_tts(session, semaphore, text=refined, ref_audio_b64=ref_audio_b64, output_path=output_audio_path, segment_index=idx)
+#         #             )
+#         #             tasks.append(task)
+#         # --- RunPod TTS Generation (Batched & Concurrent) ---
 #         if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
 #              raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
              
-#         tasks = []
 #         semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNPOD_REQUESTS)
         
 #         async with aiohttp.ClientSession() as session:
+#             pending_tasks = []
+            
+#             # 1. PREPARE TASKS (Do not run them yet)
 #             for idx, row in enumerate(rows):
 #                 while len(row) <= 10: row.append("") 
 #                 refined = row[5]
 #                 pause = row[6] if row[6] else '0'
 #                 clonevoice = row[10] if row[10] else 'yes'
                 
-#                 # --- Path to the segment's audio file ---
 #                 output_audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
 
+#                 # Check Cache
 #                 unchanged = False
 #                 if idx in prev_state:
 #                     prev = prev_state[idx]
@@ -696,25 +1012,36 @@ async def process_video(file: UploadFile = File(...)):
 
 #                 if unchanged:
 #                     logger.info(f"[Cache] Segment {idx} is UNCHANGED. Skipping.")
-#                     continue # <-- Skip to the next loop iteration
+#                     continue 
 
-#                 # --- If we are here, the segment has CHANGED ---
 #                 logger.info(f"[Cache] Segment {idx} is NEW or CHANGED.")
 
-#                 # +++ THE FIX +++
-#                 # Delete the old, stale audio file, no matter what.
-#                 # This forces the code to re-generate or re-extract it.
 #                 if os.path.exists(output_audio_path):
-#                     logger.info(f"Deleting stale audio file: {output_audio_path}")
 #                     os.remove(output_audio_path)
-#                 # +++ END OF FIX +++
 
 #                 if refined and clonevoice.lower() == "yes":
-#                     logger.info(f"[RunPod] Generating new audio for segment {idx}.")
-#                     task = asyncio.create_task(
-#                         call_runpod_tts(session, semaphore, text=refined, ref_audio_path=ref_audio_path, output_path=output_audio_path, segment_index=idx)
-#                     )
-#                     tasks.append(task)
+#                     # Create the coroutine object, but do not await it yet
+#                     task = call_runpod_tts(session, semaphore, text=refined, ref_audio_b64=ref_audio_b64, output_path=output_audio_path, segment_index=idx)
+#                     pending_tasks.append(task)
+            
+#             # 2. EXECUTE IN BATCHES (Prevents Memory Spikes)
+#             BATCH_SIZE = 5
+#             total_tasks = len(pending_tasks)
+#             logger.info(f"Queued {total_tasks} tasks. Processing in batches of {BATCH_SIZE}...")
+
+#             for i in range(0, total_tasks, BATCH_SIZE):
+#                 batch = pending_tasks[i : i + BATCH_SIZE]
+#                 logger.info(f"--- Processing Batch {i//BATCH_SIZE + 1} ({len(batch)} tasks) ---")
+                
+#                 # Run this batch and wait for it to finish
+#                 results = await asyncio.gather(*batch)
+                
+#                 # Count successes in this batch
+#                 success_count = sum(1 for res in results if res is True)
+#                 logger.info(f"Batch {i//BATCH_SIZE + 1} complete. Success: {success_count}/{len(batch)}")
+                
+#                 # CRITICAL: Force memory cleanup after every batch
+#                 gc.collect()
                 
 
 #             logger.info(f"Starting {len(tasks)} RunPod TTS generations...")
@@ -791,8 +1118,8 @@ async def process_video(file: UploadFile = File(...)):
         
 #         # --- Final video/audio processing ---
 #         t3 = time.time()
-#         final_video_path = os.path.join(local_dir, f"final_{filename}") # <--- Assignment
-#         processed_path, final_audio_path = process_segments_with_ffmpeg(segments, local_video_path, final_video_path, ass_path, local_dir) # <--- Assignment
+#         final_video_path = os.path.join(local_dir, f"final_{filename}") 
+#         processed_path, final_audio_path = process_segments_with_ffmpeg(segments, local_video_path, final_video_path, ass_path, local_dir) 
 #         log_performance("Final Video/Audio Processing", t3)
 
 #         # --- Update Google Sheet ---
@@ -802,77 +1129,71 @@ async def process_video(file: UploadFile = File(...)):
 #         log_performance("Google Sheet Update", t4)
 
 #         # --- Upload final files ---
-        
-      
-#         # # --- Save Final Video Locally ---
-#         # t6 = time.time()
-#         # local_save_dir = "./final_local_videos" 
-#         # os.makedirs(local_save_dir, exist_ok=True)
-#         # local_final_path = os.path.join(local_save_dir, f"LOCAL_{filename}")
-#         # try:
-#         #     shutil.copy2(processed_path, local_final_path)
-#         #     logger.info(f"Successfully saved final video locally to: {local_final_path}")
-#         # except Exception as e_copy:
-#         #     logger.error(f"Failed to save final video locally: {e_copy}")
-#         # log_performance("Save Final Video Locally", t6)
-        
+#         # --- Upload final files ---
 #         t5 = time.time()
-        
-#         # ✅ FIX: Capture the upload result to get the URL
-#         final_video_upload_result = upload_file(processed_path, f"Final_videos/{filename}")
-#         final_audio_upload_result = upload_file(final_audio_path, f"Final_audio/{uid}.wav")
-        
-#         # ✅ FIX: Extract the URL from the upload result
-#         final_s3_url = final_video_upload_result["url"]
-        
-#         logger.info(f"Final video uploaded to: {final_s3_url}")
+#         final_video_key = f"Final_videos/{filename}"
+#         upload_file(processed_path, final_video_key)
+#         upload_file(final_audio_path, f"Final_audio/{uid}.wav")
 #         log_performance("Upload Final Assets to S3", t5)
         
+#         # --- GENERATE PRESIGNED URL FOR FRONTEND ---
+#         try:
+#             final_s3_url = s3.generate_presigned_url(
+#                 'get_object',
+#                 Params={'Bucket': S3_BUCKET, 'Key': final_video_key},
+#                 ExpiresIn=3600 # Valid for 1 hour
+#             )
+#             logger.info(f"\n{'='*60}")
+#             logger.info(f"FINAL S3 URL SENT TO FRONTEND:")
+#             logger.info(f"{final_s3_url}")
+#             logger.info(f"{'='*60}\n")
+#         except Exception as e:
+#             logger.error(f"Failed to generate presigned URL: {e}")
+#             final_s3_url = ""
+            
+
+
+
 #         log_performance("Total /refresh-voiceover", t_start)
         
 #         # ✅ FIX: Return the URL that frontend expects
 #         return JSONResponse({
 #             "message": "Refresh completed successfully", 
 #             "processed_video": filename,
-#             "Final_s3_url": final_s3_url  # ← Frontend needs this!
+#             "Final_s3_url": final_s3_url  # <--- Included now!
 #         })
-
 
 #     except Exception as e:
 #         logger.exception("Error in /refresh-voiceover endpoint")
 #         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     
 #     finally:
-#         # --- CORRECTED, ROBUST selective cleanup ---
+#         # --- Clean up ---
 #         logger.info("Starting selective cleanup...")
 #         try:
 #             files_to_delete = [
-#                 local_video_path,   # The downloaded original video
-#                 final_video_path,   # The generated final video
-#                 final_audio_path,   # The stitched final audio
-#                 ass_path            # The generated caption file
+#                 local_video_path,   
+#                 final_video_path,   
+#                 final_audio_path,   
+#                 ass_path            
 #             ]
             
 #             for f_path in files_to_delete:
-#                 # Check if variable was assigned AND file exists
 #                 if f_path and os.path.exists(f_path):
 #                     os.remove(f_path)
 #                     logger.info(f"Cleaned up temp file: {f_path}")
-            
-#             # We INTENTIONALLY DO NOT delete:
-#             # - local_dir (the main folder)
-#             # - state_csv_path (the cache state)
-#             # - cloned_audio_dir (the cached .wav files)
 
 #         except Exception as e:
 #             logger.error(f"Error during selective cleanup: {e}")
 
+# =========================================================================================================
+#                    ENDPOINT 2: /refresh-voiceover (FINAL FIXED VERSION)
+# =========================================================================================================
 @app.post("/refresh-voiceover")
 async def refresh_voiceover(sheetId: str): 
     t_start = time.time()
     local_dir = None
     
-    # --- CORRECTED: Initialize paths to None for robust cleanup ---
     local_video_path = None
     final_video_path = None
     final_audio_path = None
@@ -910,7 +1231,7 @@ async def refresh_voiceover(sheetId: str):
             logger.error(f"FATAL: Reference audio not found at {ref_audio_path}")
             raise HTTPException(status_code=500, detail="Reference audio file is missing from the server.")
         
-        # +++ FIX START: Encode Audio ONCE here +++
+        # --- FIX: Encode Audio ONCE here ---
         ref_audio_b64 = ""
         try:
             with open(ref_audio_path, 'rb') as audio_file:
@@ -920,9 +1241,8 @@ async def refresh_voiceover(sheetId: str):
         except Exception as e:
             logger.error(f"Failed to encode reference audio: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to encode reference audio: {e}")
-        # +++ FIX END +++
 
-        # +++ START CACHING LOGIC +++
+        # --- Caching Logic ---
         prev_state = {}
         if os.path.exists(state_csv_path):
             logger.info(f"Loading state from {state_csv_path}")
@@ -937,53 +1257,10 @@ async def refresh_voiceover(sheetId: str):
                     }
             except Exception as e:
                 logger.error(f"Error loading state CSV: {e}")
-        # +++ END CACHING LOGIC +++
 
         t1 = time.time()
         rows = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='A2:L').execute().get('values', [])
         
-        # --- RunPod TTS Generation (Concurrent with Caching) ---
-        # if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
-        #      raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
-             
-        # tasks = []
-        # semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNPOD_REQUESTS)
-        
-        # async with aiohttp.ClientSession() as session:
-        #     for idx, row in enumerate(rows):
-        #         while len(row) <= 10: row.append("") 
-        #         refined = row[5]
-        #         pause = row[6] if row[6] else '0'
-        #         clonevoice = row[10] if row[10] else 'yes'
-                
-        #         # --- Path to the segment's audio file ---
-        #         output_audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
-
-        #         unchanged = False
-        #         if idx in prev_state:
-        #             prev = prev_state[idx]
-        #             unchanged = (str(refined) == str(prev['refined']) and 
-        #                          str(pause) == str(prev['pause']) and 
-        #                          str(clonevoice) == str(prev.get('CloneVoice', 'yes')))
-
-        #         if unchanged:
-        #             logger.info(f"[Cache] Segment {idx} is UNCHANGED. Skipping.")
-        #             continue 
-
-        #         # --- If we are here, the segment has CHANGED ---
-        #         logger.info(f"[Cache] Segment {idx} is NEW or CHANGED.")
-
-        #         if os.path.exists(output_audio_path):
-        #             logger.info(f"Deleting stale audio file: {output_audio_path}")
-        #             os.remove(output_audio_path)
-
-        #         if refined and clonevoice.lower() == "yes":
-        #             logger.info(f"[RunPod] Generating new audio for segment {idx}.")
-        #             # +++ FIX: Pass the pre-encoded 'ref_audio_b64' string here +++
-        #             task = asyncio.create_task(
-        #                 call_runpod_tts(session, semaphore, text=refined, ref_audio_b64=ref_audio_b64, output_path=output_audio_path, segment_index=idx)
-        #             )
-        #             tasks.append(task)
         # --- RunPod TTS Generation (Batched & Concurrent) ---
         if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
              raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
@@ -1027,6 +1304,8 @@ async def refresh_voiceover(sheetId: str):
             # 2. EXECUTE IN BATCHES (Prevents Memory Spikes)
             BATCH_SIZE = 5
             total_tasks = len(pending_tasks)
+            global_success_count = 0
+            
             logger.info(f"Queued {total_tasks} tasks. Processing in batches of {BATCH_SIZE}...")
 
             for i in range(0, total_tasks, BATCH_SIZE):
@@ -1037,22 +1316,21 @@ async def refresh_voiceover(sheetId: str):
                 results = await asyncio.gather(*batch)
                 
                 # Count successes in this batch
-                success_count = sum(1 for res in results if res is True)
-                logger.info(f"Batch {i//BATCH_SIZE + 1} complete. Success: {success_count}/{len(batch)}")
+                batch_success = sum(1 for res in results if res is True)
+                global_success_count += batch_success
+                
+                logger.info(f"Batch {i//BATCH_SIZE + 1} complete. Success: {batch_success}/{len(batch)}")
                 
                 # CRITICAL: Force memory cleanup after every batch
                 gc.collect()
-                
 
-            logger.info(f"Starting {len(tasks)} RunPod TTS generations...")
-            results = await asyncio.gather(*tasks)
-            successful_tasks = sum(1 for res in results if res is True)
-            failed_tasks = len(tasks) - successful_tasks
-            logger.info(f"RunPod TTS generation complete. Success: {successful_tasks}, Failed: {failed_tasks}")
-            if failed_tasks > 0:
-                 logger.error(f"{failed_tasks} TTS segments failed to generate via RunPod.")
+            # --- FINAL REPORT ---
+            total_failed = total_tasks - global_success_count
+            logger.info(f"RunPod TTS generation complete. Total Success: {global_success_count}, Total Failed: {total_failed}")
+            if total_failed > 0:
+                 logger.error(f"{total_failed} TTS segments failed to generate via RunPod.")
         
-        log_performance("RunPod TTS Generation (Concurrent)", t1)
+        log_performance("RunPod TTS Generation (Batched)", t1)
         
         # --- Timestamp calculation and segment processing ---
         t2 = time.time()
@@ -1129,38 +1407,41 @@ async def refresh_voiceover(sheetId: str):
         log_performance("Google Sheet Update", t4)
 
         # --- Upload final files ---
-        # --- Upload final files ---
         t5 = time.time()
-        final_video_key = f"Final_videos/{filename}"
+        
+        # 1. Sanitize filename (Crucial: Replace spaces with underscores)
+        clean_filename = filename.replace(" ", "_")
+        final_video_key = f"Final_videos/{clean_filename}"
+        
+        # 2. Upload using the CLEAN key
         upload_file(processed_path, final_video_key)
         upload_file(final_audio_path, f"Final_audio/{uid}.wav")
         log_performance("Upload Final Assets to S3", t5)
         
-        # --- GENERATE PRESIGNED URL FOR FRONTEND ---
+        # 3. GENERATE PRESIGNED URL
         try:
             final_s3_url = s3.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': S3_BUCKET, 'Key': final_video_key},
                 ExpiresIn=3600 # Valid for 1 hour
             )
-            logger.info(f"\n{'='*60}")
-            logger.info(f"FINAL S3 URL SENT TO FRONTEND:")
-            logger.info(f"{final_s3_url}")
-            logger.info(f"{'='*60}\n")
         except Exception as e:
-            logger.error(f"Failed to generate presigned URL: {e}")
+            print(f"ERROR GENERATING URL: {e}", flush=True) # FORCE PRINT
             final_s3_url = ""
-            
 
-
+        # 4. >>> FORCE PRINT URL <<<
+        print("\n" + "="*60, flush=True)
+        print("✅ DEBUG: FINAL S3 URL GENERATED:", flush=True)
+        print(final_s3_url, flush=True)
+        print("="*60 + "\n", flush=True)
 
         log_performance("Total /refresh-voiceover", t_start)
         
-        # ✅ FIX: Return the URL that frontend expects
+        # 5. Return to Frontend
         return JSONResponse({
             "message": "Refresh completed successfully", 
-            "processed_video": filename,
-            "Final_s3_url": final_s3_url  # <--- Included now!
+            "processed_video": clean_filename,
+            "Final_s3_url": final_s3_url 
         })
 
     except Exception as e:
