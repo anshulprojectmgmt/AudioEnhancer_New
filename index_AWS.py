@@ -1143,14 +1143,15 @@ async def refresh_voiceover(sheetId: str):
                 Params={'Bucket': S3_BUCKET, 'Key': final_video_key},
                 ExpiresIn=3600 # Valid for 1 hour
             )
+            logger.info(f"\n{'='*60}")
+            logger.info(f"FINAL S3 URL SENT TO FRONTEND:")
+            logger.info(f"{final_s3_url}")
+            logger.info(f"{'='*60}\n")
         except Exception as e:
             logger.error(f"Failed to generate presigned URL: {e}")
             final_s3_url = ""
             
-        logger.info(f"\n{'='*60}")
-        logger.info(f"FINAL S3 URL SENT TO FRONTEND:")
-        logger.info(f"{final_s3_url}")
-        logger.info(f"{'='*60}\n")
+
 
 
         log_performance("Total /refresh-voiceover", t_start)
