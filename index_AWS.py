@@ -1585,20 +1585,57 @@ async def create_avatar_video(sheetId: str): # <--- API Contract: NOW ONLY NEEDS
         run_ffmpeg(["ffmpeg", "-y", "-i", main_video_path, "-i", avatar_video_path, "-filter_complex", ffmpeg_filter, "-c:a", "copy", output_path], "Avatar Overlay Composition")
         log_performance("Avatar - FFmpeg Composition", t2)
         
+        # t3 = time.time()
+        # final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
+        # log_performance("Avatar - Upload Final Video", t3)
+        
+        # log_performance("Total /create-avatar-video", t_start)
+        # return JSONResponse({"message": "Avatar video created successfully!", "final_video_url": final_s3_info.get("url")})
         t3 = time.time()
         final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
         log_performance("Avatar - Upload Final Video", t3)
         
+        # --- GENERATE PRESIGNED URL (This makes it streamable) ---
+        try:
+            final_s3_url = s3.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': S3_BUCKET, 'Key': f"Avatar_videos/{filename}"},
+                ExpiresIn=3600 # Valid for 1 hour
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate output presigned URL: {e}")
+            final_s3_url = ""
+            
         log_performance("Total /create-avatar-video", t_start)
-        return JSONResponse({"message": "Avatar video created successfully!", "final_video_url": final_s3_info.get("url")})
+        
+        # --- RETURN THE SIGNED URL ---
+        return JSONResponse({
+            "message": "Avatar video created successfully!", 
+            "final_video_url": final_s3_url # <--- Frontend plays this!
+        })
 
     except Exception as e:
         logger.exception("Error in /create-avatar-video endpoint")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        # --- TOTAL CLEANUP (Deletes current job AND previous voiceover job) ---
+        logger.info("Starting comprehensive cleanup...")
+        
+        # 1. Clean up Avatar folder
         if local_dir and os.path.exists(local_dir):
-            logger.info(f"Cleaning up temporary directory: {local_dir}")
-            shutil.rmtree(local_dir)
+            try:
+                shutil.rmtree(local_dir)
+                logger.info(f"Deleted avatar temp dir: {local_dir}")
+            except Exception as e:
+                logger.error(f"Failed to delete avatar dir: {e}")
+
+        # 2. Clean up Voiceover folder (The previous step)
+        if voiceover_dir and os.path.exists(voiceover_dir):
+            try:
+                shutil.rmtree(voiceover_dir)
+                logger.info(f"Deleted voiceover temp dir: {voiceover_dir}")
+            except Exception as e:
+                logger.error(f"Failed to delete voiceover dir: {e}")
 
 # Add a root endpoint for basic check
 @app.get("/")
