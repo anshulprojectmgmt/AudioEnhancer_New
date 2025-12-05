@@ -1775,9 +1775,19 @@ async def create_avatar_video(request: AvatarRequest):
         output_path = os.path.join(local_dir, f"avatar_final_{clean_filename}")
         
         # FFmpeg: Scale avatar and overlay
+        # FFmpeg: Crop Center Square -> Scale to 30% Height -> Circle -> Overlay
         ffmpeg_filter = (
-            "[1:v]scale=-1:240,format=rgba,geq=lum='p(X,Y)':a='if(lte(pow(X-W/2,2)+pow(Y-H/2,2),pow(min(W/2,H/2),2)),255,0)'[avatar_circular];" 
-            "[0:v][avatar_circular]overlay=main_w-overlay_w-30:main_h-overlay_h-30" 
+            # 1. Crop a perfect square from the center of the Avatar video (avoids tiny heads)
+            "[1:v]crop='min(iw,ih):min(iw,ih):(iw-min(iw,ih))/2:(ih-min(iw,ih))/2'[avatar_square];"
+            
+            # 2. Scale that square to be 30% of the Main Video's height (Dynamic Size)
+            "[avatar_square][0:v]scale2ref=h=ih*0.3:w=oh[avatar_scaled][main_video];"
+            
+            # 3. Cut the circle
+            "[avatar_scaled]format=rgba,geq=lum='p(X,Y)':a='if(lte(pow(X-W/2,2)+pow(Y-H/2,2),pow(min(W/2,H/2),2)),255,0)'[avatar_circular];"
+            
+            # 4. Overlay at bottom right
+            "[main_video][avatar_circular]overlay=main_w-overlay_w-30:main_h-overlay_h-30"
         )
         run_ffmpeg(["ffmpeg", "-y", "-i", main_video_path, "-i", avatar_video_path, "-filter_complex", ffmpeg_filter, "-c:a", "copy", output_path], "Avatar Overlay Composition")
         log_performance("Avatar - FFmpeg Composition", t2)
