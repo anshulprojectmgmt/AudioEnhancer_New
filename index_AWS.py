@@ -1324,6 +1324,7 @@ async def refresh_voiceover(sheetId: str):
                 audio_path = None
                 factor = 1.0
                 audio_len_sec = video_len
+                is_cloned = (clone_voice.lower() == "yes")
 
                 if clone_voice.lower() == "no":
                     audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
