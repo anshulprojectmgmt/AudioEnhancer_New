@@ -271,7 +271,7 @@ def process_segments_with_ffmpeg(segments, input_path, output_path, ass_path, tm
     for i, seg in enumerate(segments):
         vid_idx = video_inputs.index(seg["path"])
         speed_filter = f",setpts=(PTS-STARTPTS)/{seg['factor']}" if seg['factor'] != 1.0 else ",setpts=PTS-STARTPTS"
-        video_filters.append(f"[{vid_idx}:v]trim=start={seg['start']}:end={seg['end']}{speed_filter},scale=1920:1080,setsar=1[v{i}]")
+        video_filters.append(f"[{vid_idx}:v]trim=start={seg['start']}:end={seg['end']}{speed_filter},setsar=1[v{i}]")
         video_concat_inputs.append(f"[v{i}]")
     
     video_concat_filter = f"{''.join(video_concat_inputs)}concat=n={len(segments)}:v=1:a=0[outv]"
