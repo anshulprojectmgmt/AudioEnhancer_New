@@ -288,94 +288,65 @@ def process_segments_with_ffmpeg(segments, input_path, output_path, ass_path, tm
     log_performance("FFmpeg - Final Video Composition", t2)
     return output_path, tmp_audio
 
+
+def create_avatar_only_audio(segments, output_path):
+    """
+    Creates an audio track specifically for HeyGen.
+    - If Clone Voice = YES: Use the generated TTS audio.
+    - If Clone Voice = NO: Insert SILENCE (do not use original audio).
+    """
+    t0 = time.time()
+    tmp_list_path = output_path + ".txt"
+    
+    # 1. Generate Silence File (1 second, will be looped/trimmed)
+    silence_source = os.path.join(os.path.dirname(output_path), "silence_base.wav")
+    if not os.path.exists(silence_source):
+        # Create a 1-second silent file to use as a base
+        run_ffmpeg(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "1", silence_source], "Gen Silence Base")
+
+    # 2. Build the Concat List
+    # We cannot use complex filters easily for variable lengths, so we use the concat demuxer method
+    with open(tmp_list_path, 'w') as f:
+        for seg in segments:
+            # Calculate duration
+            duration = (seg["end"] - seg["start"]) / seg["factor"]
+            if duration <= 0: continue
+
+            # Logic: If Audio Path exists (meaning we cloned it), use it.
+            # If NO Audio Path (meaning we used original), use SILENCE.
+            
+            # Check if this segment was actually cloned (logic from refresh_voiceover)
+            # In refresh_voiceover, we set 'audio_path' ONLY if we generated/extracted it.
+            # But for "No Clone", we want SILENCE, not the extracted original.
+            
+            # We need to rely on the 'audio_path' being the TTS file. 
+            # If the user selected "No", refresh_voiceover currently extracts original audio to that path.
+            # We need to distinguish based on the 'clone_voice' flag which is not explicitly in 'segments' dict yet.
+            # passed 'segments' needs to know if it was cloned.
+            
+            is_cloned = seg.get("is_cloned", False) # We will add this flag in Endpoint 2
+            
+            if is_cloned and seg.get("audio_path") and os.path.exists(seg.get("audio_path")):
+                # USE TTS AUDIO
+                f.write(f"file '{os.path.abspath(seg['audio_path'])}'\n")
+            else:
+                # USE SILENCE
+                # We use the silence_base but we need it to be exact duration. 
+                # FFmpeg concat demuxer is tricky with duration. 
+                # Better approach: Create a specific silent chunk for this segment.
+                silent_seg_path = os.path.join(os.path.dirname(output_path), f"silence_{duration:.3f}.wav")
+                if not os.path.exists(silent_seg_path):
+                    run_ffmpeg(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=48000:cl=stereo:d={duration}", silent_seg_path], f"Gen Silence {duration}")
+                f.write(f"file '{os.path.abspath(silent_seg_path)}'\n")
+
+    # 3. Concatenate
+    run_ffmpeg(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmp_list_path, "-c", "copy", output_path], "Avatar Audio Stitching")
+    log_performance("Avatar Audio Generation (Silence Injected)", t0)
+    return output_path
+
 # =========================================================================================================
-#                    NEW RUNPOD TTS HELPER FUNCTION <--- NEW SECTION
+#                    NEW RUNPOD TTS HELPER FUNCTION 
 # =========================================================================================================
-# async def call_runpod_tts(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore, text: str, ref_audio_path: str, output_path: str, segment_index: int):
-#     """
-#     Sends a TTS request to the RunPod endpoint, handles response, and saves audio.
-#     Includes semaphore for concurrency control and retries.
-#     """
-#     MAX_RETRIES = 3
-#     RETRY_DELAY = 5 # seconds
-
-#     # 1. Encode reference audio
-#     try:
-#         with open(ref_audio_path, 'rb') as audio_file:
-#             audio_bytes = audio_file.read()
-#             ref_audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-#     except FileNotFoundError:
-#         logger.error(f"[RunPod TTS {segment_index}] Reference audio not found: {ref_audio_path}")
-#         return False # Indicate failure
-#     except Exception as e:
-#         logger.error(f"[RunPod TTS {segment_index}] Error encoding ref audio {ref_audio_path}: {e}")
-#         return False
-
-#     # 2. Prepare payload
-#     payload = {
-#         "input": {
-#             "task": "tts",
-#             "text": text,
-#             "ref_audio_b64": ref_audio_b64,
-#             # Add other optional parameters if needed (e.g., exaggeration)
-#             # "exaggeration": 0.5
-#         }
-#     }
-#     headers = {
-#         "Authorization": f"Bearer {RUNPOD_API_KEY}",
-#         "Content-Type": "application/json"
-#     }
-
-#     # 3. Make request with semaphore and retries
-#     async with semaphore:
-#         logger.info(f"[RunPod TTS {segment_index}] Sending request...")
-#         for attempt in range(MAX_RETRIES):
-#             try:
-#                 async with session.post(RUNPOD_ENDPOINT_URL, json=payload, headers=headers, timeout=300) as response: # 5 min timeout
-#                     response_text = await response.text() # Read text first for debugging
-#                     if response.status == 200:
-#                         response_data = json.loads(response_text)
-#                         status = response_data.get("status")
-
-#                         if status == "COMPLETED":
-#                             output = response_data.get("output", {})
-#                             if output.get("audio_b64"):
-#                                 # Decode and save audio
-#                                 audio_bytes_out = base64.b64decode(output["audio_b64"])
-#                                 with open(output_path, "wb") as f_out:
-#                                     f_out.write(audio_bytes_out)
-#                                 logger.info(f"[RunPod TTS {segment_index}] Successfully generated: {output_path}")
-#                                 return True # Indicate success
-#                             else:
-#                                 error_msg = output.get("error", "Unknown error from worker")
-#                                 logger.error(f"[RunPod TTS {segment_index}] Worker failed: {error_msg}")
-#                                 return False # Indicate failure (don't retry worker errors)
-#                         elif status == "FAILED":
-#                              error_details = response_data.get("error", "No error details provided.")
-#                              logger.error(f"[RunPod TTS {segment_index}] Job FAILED on RunPod: {error_details}")
-#                              return False # Indicate failure (don't retry job fails)
-#                         else:
-#                              # Handle IN_QUEUE, IN_PROGRESS (shouldn't happen with /runsync but handle defensively)
-#                              logger.warning(f"[RunPod TTS {segment_index}] Unexpected status {status}. Retrying...")
-                             
-#                     else:
-#                         logger.error(f"[RunPod TTS {segment_index}] Request failed (Attempt {attempt+1}/{MAX_RETRIES}): Status {response.status}, Body: {response_text[:500]}") # Log truncated body
-
-#             except asyncio.TimeoutError:
-#                 logger.error(f"[RunPod TTS {segment_index}] Request timed out (Attempt {attempt+1}/{MAX_RETRIES}).")
-#             except aiohttp.ClientError as e:
-#                  logger.error(f"[RunPod TTS {segment_index}] Client error (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
-#             except Exception as e:
-#                 logger.error(f"[RunPod TTS {segment_index}] Unexpected error during request (Attempt {attempt+1}/{MAX_RETRIES}): {e}")
-
-#             # Wait before retrying
-#             if attempt < MAX_RETRIES - 1:
-#                 await asyncio.sleep(RETRY_DELAY * (attempt + 1)) # Exponential backoff might be better
-#             else:
-#                  logger.error(f"[RunPod TTS {segment_index}] Max retries reached. Failed to generate.")
-#                  return False # Indicate final failure
-
-#     return False # Should not be reached if semaphore logic is correct
 
 async def call_runpod_tts(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore, text: str, ref_audio_b64: str, output_path: str, segment_index: int):
     """
@@ -456,7 +427,10 @@ async def call_runpod_tts(session: aiohttp.ClientSession, semaphore: asyncio.Sem
 # =========================================================================================================
 #                    ENDPOINT 1: /process-video
 # =========================================================================================================
-# (Remains the same - no TTS here)
+# (Remains the same - no TTS here
+
+
+
 @app.post("/process-video")
 async def process_video(file: UploadFile = File(...)):
     # (Function content remains the same)
@@ -1377,7 +1351,7 @@ async def refresh_voiceover(sheetId: str):
                 current_new_start = new_end
                 row[7] = f"{audio_len_sec:.3f}"
                 row[8] = f"{video_len:.3f}"
-                segments.append({"start": start, "end": end, "factor": factor, "audio_path": audio_path, "path": local_video_path})
+                segments.append({"start": start, "end": end, "factor": factor, "audio_path": audio_path, "path": local_video_path,"is_cloned": is_cloned})
             except (ValueError, IndexError, TypeError) as e:
                 logger.warning(f"Skipping malformed row {idx+2} during segment processing: {row} | Error: {e}")
 
@@ -1400,6 +1374,10 @@ async def refresh_voiceover(sheetId: str):
         t3 = time.time()
         final_video_path = os.path.join(local_dir, f"final_{filename}") 
         processed_path, final_audio_path = process_segments_with_ffmpeg(segments, local_video_path, final_video_path, ass_path, local_dir) 
+        # +++ NEW: Generate Avatar-Specific Audio (With Silence) +++
+        avatar_audio_local_path = os.path.join(local_dir, "avatar_audio_input.wav")
+        create_avatar_only_audio(segments, avatar_audio_local_path)
+        # +++ END NEW +++
         log_performance("Final Video/Audio Processing", t3)
 
         # --- Update Google Sheet ---
@@ -1418,6 +1396,7 @@ async def refresh_voiceover(sheetId: str):
         # 2. Upload using the CLEAN key
         upload_file(processed_path, final_video_key)
         upload_file(final_audio_path, f"Final_audio/{uid}.wav")
+        upload_file(avatar_audio_local_path, f"Final_audio_avatar/{uid}.wav")
         log_performance("Upload Final Assets to S3", t5)
         
         # 3. GENERATE PRESIGNED URL (FORCE DOWNLOAD VERSION)
@@ -1760,7 +1739,7 @@ async def create_avatar_video(request: AvatarRequest):
         log_performance("Avatar - Download Assets", t0)
 
         t1 = time.time()
-        final_audio_s3_key = f"Final_audio/{uid}.wav"
+        final_audio_s3_key = f"Final_audio_avatar/{uid}.wav"
         
         # Generate HeyGen Video using the PASSED Credentials
         avatar_video_url = await generate_heygen_video(final_audio_s3_key, avatar_id, heygen_api_key)
