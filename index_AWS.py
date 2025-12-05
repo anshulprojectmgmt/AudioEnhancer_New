@@ -289,61 +289,70 @@ def process_segments_with_ffmpeg(segments, input_path, output_path, ass_path, tm
     return output_path, tmp_audio
 
 
+# =========================================================================================================
+#                    FIXED HELPER: SILENCE INJECTION (SMART STITCHING)
+# =========================================================================================================
 def create_avatar_only_audio(segments, output_path):
     """
-    Creates an audio track specifically for HeyGen.
-    - If Clone Voice = YES: Use the generated TTS audio.
-    - If Clone Voice = NO: Insert SILENCE (do not use original audio).
+    Creates an audio track specifically for HeyGen using Filter Complex.
+    - Ensures all segments (TTS and Silence) are converted to 48kHz Stereo before stitching.
+    - Fixes distortion and duration mismatch issues.
     """
     t0 = time.time()
-    tmp_list_path = output_path + ".txt"
     
-    # 1. Generate Silence File (1 second, will be looped/trimmed)
-    silence_source = os.path.join(os.path.dirname(output_path), "silence_base.wav")
-    if not os.path.exists(silence_source):
-        # Create a 1-second silent file to use as a base
-        run_ffmpeg(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "1", silence_source], "Gen Silence Base")
+    # Filter valid segments
+    valid_segments = [s for s in segments if (s["end"] - s["start"]) > 0.01]
+    
+    # 1. Gather Inputs
+    # We need to map which segments use a File and which use generated Silence
+    inputs = []
+    filter_chains = []
+    concat_nodes = []
+    
+    for i, seg in enumerate(valid_segments):
+        duration = seg["end"] - seg["start"]
+        if seg.get("factor", 1.0) > 0:
+             duration = duration / seg["factor"]
+        
+        is_cloned = seg.get("is_cloned", False)
+        audio_path = seg.get("audio_path")
+        
+        # Logic: Use TTS file if Cloned, otherwise generate Silence
+        if is_cloned and audio_path and os.path.exists(audio_path):
+            # Input is the TTS file
+            inputs.extend(["-i", audio_path])
+            input_idx = len(inputs) // 2 - 1 # Calculate ffmpeg input index (0, 1, 2...)
+            
+            # Force conversion to 48k Stereo for uniformity
+            filter_chains.append(f"[{input_idx}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]")
+        else:
+            # Input is generated Silence (anullsrc)
+            # We don't add an -i file, we use the lavfi source directly in the filter
+            filter_chains.append(f"anullsrc=r=48000:cl=stereo:d={duration},asetpts=PTS-STARTPTS[a{i}]")
+            
+        concat_nodes.append(f"[a{i}]")
 
-    # 2. Build the Concat List
-    # We cannot use complex filters easily for variable lengths, so we use the concat demuxer method
-    with open(tmp_list_path, 'w') as f:
-        for seg in segments:
-            # Calculate duration
-            duration = (seg["end"] - seg["start"]) / seg["factor"]
-            if duration <= 0: continue
-
-            # Logic: If Audio Path exists (meaning we cloned it), use it.
-            # If NO Audio Path (meaning we used original), use SILENCE.
-            
-            # Check if this segment was actually cloned (logic from refresh_voiceover)
-            # In refresh_voiceover, we set 'audio_path' ONLY if we generated/extracted it.
-            # But for "No Clone", we want SILENCE, not the extracted original.
-            
-            # We need to rely on the 'audio_path' being the TTS file. 
-            # If the user selected "No", refresh_voiceover currently extracts original audio to that path.
-            # We need to distinguish based on the 'clone_voice' flag which is not explicitly in 'segments' dict yet.
-            # passed 'segments' needs to know if it was cloned.
-            
-            is_cloned = seg.get("is_cloned", False) # We will add this flag in Endpoint 2
-            
-            if is_cloned and seg.get("audio_path") and os.path.exists(seg.get("audio_path")):
-                # USE TTS AUDIO
-                f.write(f"file '{os.path.abspath(seg['audio_path'])}'\n")
-            else:
-                # USE SILENCE
-                # We use the silence_base but we need it to be exact duration. 
-                # FFmpeg concat demuxer is tricky with duration. 
-                # Better approach: Create a specific silent chunk for this segment.
-                silent_seg_path = os.path.join(os.path.dirname(output_path), f"silence_{duration:.3f}.wav")
-                if not os.path.exists(silent_seg_path):
-                    run_ffmpeg(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=48000:cl=stereo:d={duration}", silent_seg_path], f"Gen Silence {duration}")
-                f.write(f"file '{os.path.abspath(silent_seg_path)}'\n")
-
-    # 3. Concatenate
-    run_ffmpeg(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", tmp_list_path, "-c", "copy", output_path], "Avatar Audio Stitching")
-    log_performance("Avatar Audio Generation (Silence Injected)", t0)
+    # 2. Build the Complex Filter Command
+    # Combine all [a0][a1]... into one stream
+    concat_segment_str = "".join(concat_nodes)
+    filter_chains.append(f"{concat_segment_str}concat=n={len(concat_nodes)}:v=0:a=1[outa]")
+    
+    full_filter_complex = ";".join(filter_chains)
+    
+    # 3. Run FFmpeg
+    cmd = [
+        "ffmpeg", "-y",
+        *inputs,
+        "-filter_complex", full_filter_complex,
+        "-map", "[outa]",
+        "-c:a", "pcm_s16le", # Standard WAV encoding
+        "-ar", "48000",      # Standard Rate
+        output_path
+    ]
+    
+    run_ffmpeg(cmd, "Avatar Audio Smart Stitching")
+    log_performance("Avatar Audio Generation (Smart Stitching)", t0)
     return output_path
-
 # =========================================================================================================
 #                    NEW RUNPOD TTS HELPER FUNCTION 
 # =========================================================================================================
