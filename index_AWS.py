@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource
 import google.generativeai as genai
 from pydantic import BaseModel
+import gc 
 # import torch # <-- Removed torch (unless needed elsewhere)
 # import multiprocessing # <-- Removed multiprocessing
 # import concurrent.futures # <-- Removed concurrent.futures
