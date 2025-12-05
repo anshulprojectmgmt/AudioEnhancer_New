@@ -13,6 +13,7 @@ from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource
 import google.generativeai as genai
+from pydantic import BaseModel
 # import torch # <-- Removed torch (unless needed elsewhere)
 # import multiprocessing # <-- Removed multiprocessing
 # import concurrent.futures # <-- Removed concurrent.futures
@@ -1475,17 +1476,93 @@ async def refresh_voiceover(sheetId: str):
 # =========================================================================================================
 #                    ENDPOINT 3: /create-avatar-video (HEYGEN)
 # =========================================================================================================
-# (Remains the same - no changes needed)
-async def generate_heygen_video(audio_s3_key: str, avatar_id: str):
-    t_start = time.time()
-    HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
-    if not HEYGEN_API_KEY:
-        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY is not set.")
 
-    headers = {"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"}
+# --- Request Model for Avatar Endpoint ---
+class AvatarRequest(BaseModel):
+    sheetId: str
+    heygenApiKey: str
+    avatarId: str
+
+# async def generate_heygen_video(audio_s3_key: str, avatar_id: str):
+#     t_start = time.time()
+#     HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
+#     if not HEYGEN_API_KEY:
+#         raise HTTPException(status_code=500, detail="HEYGEN_API_KEY is not set.")
+
+#     headers = {"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"}
     
-    # Create a pre-signed URL for Heygen to access the audio from S3
-    audio_url = s3.generate_presigned_url('get_object', Params={'Bucket': S3_BUCKET, 'Key': audio_s3_key}, ExpiresIn=3600)
+#     # Create a pre-signed URL for Heygen to access the audio from S3
+#     audio_url = s3.generate_presigned_url('get_object', Params={'Bucket': S3_BUCKET, 'Key': audio_s3_key}, ExpiresIn=3600)
+#     log_performance("Heygen - Generate Presigned URL", t_start)
+
+#     t1 = time.time()
+#     generate_payload = {
+#         "video_inputs": [{
+#             "character": {"type": "avatar", "avatar_id": avatar_id, "avatar_style": "normal"},
+#             "voice": {"type": "audio", "audio_url": audio_url},
+#             "background": {"type": "color", "value": "#00FF00"} # Green screen
+#         }],
+#         "dimension": {"width": 960 , "height": 540}, # Specify dimensions if needed
+#         "test": True # Use test mode if needed
+#     }
+    
+#     generate_response = requests.post("https://api.heygen.com/v2/video/generate", headers=headers, json=generate_payload)
+#     if generate_response.status_code != 200:
+#         raise HTTPException(status_code=generate_response.status_code, detail=f"Heygen video generation failed to start: {generate_response.text}")
+#     video_id = generate_response.json()["data"]["video_id"]
+#     log_performance("Heygen - Start Video Generation", t1)
+
+#     t2 = time.time()
+#     status_url = f"https://api.heygen.com/v1/video_status.get?video_id={video_id}"
+#     video_download_url = None
+#     # Poll for status (consider increasing timeout or retries)
+#     for _ in range(60): # Poll for up to 15 minutes (60 * 15 seconds)
+#         await asyncio.sleep(15) 
+#         try:
+#              status_response = requests.get(status_url, headers={"X-Api-Key": HEYGEN_API_KEY}, timeout=30)
+#              status_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+#              status_data = status_response.json().get("data", {})
+#              current_status = status_data.get('status')
+#              logger.info(f"Heygen video {video_id} status: {current_status}")
+#              if current_status in ["succeeded", "completed"]:
+#                  video_download_url = status_data.get("video_url")
+#                  if video_download_url:
+#                      break
+#                  else:
+#                      logger.warning(f"Heygen status succeeded but video_url is missing: {status_data}")
+#                      # Optionally retry or handle this case
+#              elif current_status == "failed":
+#                  raise HTTPException(status_code=500, detail=f"Heygen video failed: {status_data.get('error')}")
+#         except requests.exceptions.RequestException as e:
+#             logger.error(f"Error polling Heygen status: {e}. Retrying...")
+#         except Exception as e: # Catch other potential errors
+#              logger.error(f"Unexpected error during Heygen status polling: {e}")
+#              # Decide if this should be fatal or retried
+    
+#     if not video_download_url:
+#         raise HTTPException(status_code=500, detail="Heygen video generation timed out or failed to get URL.")
+#     log_performance("Heygen - Poll for Status", t2)
+#     return video_download_url
+
+async def generate_heygen_video(audio_s3_key: str, avatar_id: str, api_key: str):
+    t_start = time.time()
+    
+    if not api_key:
+        raise HTTPException(status_code=400, detail="HeyGen API Key is missing.")
+
+    headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
+    
+    # Generate Presigned URL so HeyGen can access our private S3 audio
+    try:
+        audio_url = s3.generate_presigned_url(
+            'get_object', 
+            Params={'Bucket': S3_BUCKET, 'Key': audio_s3_key}, 
+            ExpiresIn=3600
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate audio presigned URL: {e}")
+        raise HTTPException(status_code=500, detail=f"S3 Error: {e}")
+        
     log_performance("Heygen - Generate Presigned URL", t_start)
 
     t1 = time.time()
@@ -1495,80 +1572,197 @@ async def generate_heygen_video(audio_s3_key: str, avatar_id: str):
             "voice": {"type": "audio", "audio_url": audio_url},
             "background": {"type": "color", "value": "#00FF00"} # Green screen
         }],
-        "dimension": {"width": 960 , "height": 540}, # Specify dimensions if needed
-        "test": True # Use test mode if needed
+        "dimension": {"width": 960 , "height": 540}, 
+        "test": True 
     }
     
+    # Generate Video
     generate_response = requests.post("https://api.heygen.com/v2/video/generate", headers=headers, json=generate_payload)
+    
     if generate_response.status_code != 200:
-        raise HTTPException(status_code=generate_response.status_code, detail=f"Heygen video generation failed to start: {generate_response.text}")
+        logger.error(f"HeyGen API Error: {generate_response.text}")
+        raise HTTPException(status_code=generate_response.status_code, detail=f"Heygen failed: {generate_response.text}")
+    
     video_id = generate_response.json()["data"]["video_id"]
     log_performance("Heygen - Start Video Generation", t1)
 
     t2 = time.time()
     status_url = f"https://api.heygen.com/v1/video_status.get?video_id={video_id}"
     video_download_url = None
-    # Poll for status (consider increasing timeout or retries)
-    for _ in range(60): # Poll for up to 15 minutes (60 * 15 seconds)
+    
+    # Poll for status
+    for _ in range(60): # 15 minutes max
         await asyncio.sleep(15) 
         try:
-             status_response = requests.get(status_url, headers={"X-Api-Key": HEYGEN_API_KEY}, timeout=30)
-             status_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+             status_response = requests.get(status_url, headers={"X-Api-Key": api_key}, timeout=30)
+             status_response.raise_for_status() 
              status_data = status_response.json().get("data", {})
              current_status = status_data.get('status')
+             
              logger.info(f"Heygen video {video_id} status: {current_status}")
+             
              if current_status in ["succeeded", "completed"]:
                  video_download_url = status_data.get("video_url")
                  if video_download_url:
                      break
                  else:
                      logger.warning(f"Heygen status succeeded but video_url is missing: {status_data}")
-                     # Optionally retry or handle this case
              elif current_status == "failed":
-                 raise HTTPException(status_code=500, detail=f"Heygen video failed: {status_data.get('error')}")
+                 error_msg = status_data.get('error')
+                 logger.error(f"HeyGen Job Failed: {error_msg}")
+                 raise HTTPException(status_code=500, detail=f"Heygen video failed: {error_msg}")
+                 
         except requests.exceptions.RequestException as e:
             logger.error(f"Error polling Heygen status: {e}. Retrying...")
-        except Exception as e: # Catch other potential errors
+        except Exception as e: 
              logger.error(f"Unexpected error during Heygen status polling: {e}")
-             # Decide if this should be fatal or retried
     
     if not video_download_url:
-        raise HTTPException(status_code=500, detail="Heygen video generation timed out or failed to get URL.")
+        raise HTTPException(status_code=500, detail="Heygen video generation timed out.")
+    
     log_performance("Heygen - Poll for Status", t2)
     return video_download_url
 
-@app.post("/create-avatar-video")
-async def create_avatar_video(sheetId: str): # <--- API Contract: NOW ONLY NEEDS sheetId
-    t_start = time.time()
+# @app.post("/create-avatar-video")
+# async def create_avatar_video(sheetId: str): # <--- API Contract: NOW ONLY NEEDS sheetId
+#     t_start = time.time()
 
-    # +++ ADD THIS BLOCK +++
-    # Get the filename from the sheet, just like /refresh-voiceover does
-    try:
-        filename_resp = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='M1').execute()
-        filename = filename_resp['values'][0][0]
-    except (HttpError, KeyError, IndexError):
-        raise HTTPException(status_code=400, detail="Could not retrieve filename from sheet cell M1.")
-    # +++ END OF BLOCK +++
+#     # +++ ADD THIS BLOCK +++
+#     # Get the filename from the sheet, just like /refresh-voiceover does
+#     try:
+#         filename_resp = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='M1').execute()
+#         filename = filename_resp['values'][0][0]
+#     except (HttpError, KeyError, IndexError):
+#         raise HTTPException(status_code=400, detail="Could not retrieve filename from sheet cell M1.")
+#     # +++ END OF BLOCK +++
 
-    uid = filename.split('_')[-1].split('.')[0]
-    local_dir = f"./Data/tmp/{uid}_avatar"
-    os.makedirs(local_dir, exist_ok=True)
+#     uid = filename.split('_')[-1].split('.')[0]
+#     local_dir = f"./Data/tmp/{uid}_avatar"
+#     os.makedirs(local_dir, exist_ok=True)
     
+#     try:
+#         t0 = time.time()
+#         main_video_path = os.path.join(local_dir, filename)
+#         download_file(f"Final_videos/{filename}", main_video_path)
+#         log_performance("Avatar - Download Assets", t0)
+
+#         t1 = time.time()
+#         final_audio_s3_key = f"Final_audio/{uid}.wav"
+#         AVATAR_ID = os.getenv("HEYGEN_AVATAR_ID", "Default_Avatar_ID_If_Not_Set") # Get from env
+#         avatar_video_url = await generate_heygen_video(final_audio_s3_key, AVATAR_ID)
+        
+#         avatar_video_path = os.path.join(local_dir, "avatar.mp4")
+#         # Download the generated video
+#         logger.info(f"Downloading Heygen video from: {avatar_video_url}")
+#         with requests.get(avatar_video_url, stream=True, timeout=300) as r: # Increased timeout
+#             r.raise_for_status()
+#             with open(avatar_video_path, 'wb') as f:
+#                 for chunk in r.iter_content(chunk_size=8192):
+#                      f.write(chunk)
+#         log_performance("Avatar - Download Heygen Video", t1)
+
+#         t2 = time.time()
+#         output_path = os.path.join(local_dir, f"avatar_final_{filename}")
+#         # Make the avatar smaller and place it bottom right
+#         ffmpeg_filter = (
+#             "[1:v]scale=-1:240,format=rgba,geq=lum='p(X,Y)':a='if(lte(pow(X-W/2,2)+pow(Y-H/2,2),pow(min(W/2,H/2),2)),255,0)'[avatar_circular];" # Scale to 240px height, make circular
+#             "[0:v][avatar_circular]overlay=main_w-overlay_w-30:main_h-overlay_h-30" # Place bottom right with 30px margin
+#         )
+#         run_ffmpeg(["ffmpeg", "-y", "-i", main_video_path, "-i", avatar_video_path, "-filter_complex", ffmpeg_filter, "-c:a", "copy", output_path], "Avatar Overlay Composition")
+#         log_performance("Avatar - FFmpeg Composition", t2)
+        
+#         # t3 = time.time()
+#         # final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
+#         # log_performance("Avatar - Upload Final Video", t3)
+        
+#         # log_performance("Total /create-avatar-video", t_start)
+#         # return JSONResponse({"message": "Avatar video created successfully!", "final_video_url": final_s3_info.get("url")})
+#         t3 = time.time()
+#         final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
+#         log_performance("Avatar - Upload Final Video", t3)
+        
+#         # --- GENERATE PRESIGNED URL (This makes it streamable) ---
+#         try:
+#             final_s3_url = s3.generate_presigned_url(
+#                 'get_object',
+#                 Params={'Bucket': S3_BUCKET, 'Key': f"Avatar_videos/{filename}"},
+#                 ExpiresIn=3600 # Valid for 1 hour
+#             )
+#         except Exception as e:
+#             logger.error(f"Failed to generate output presigned URL: {e}")
+#             final_s3_url = ""
+            
+#         log_performance("Total /create-avatar-video", t_start)
+        
+#         # --- RETURN THE SIGNED URL ---
+#         return JSONResponse({
+#             "message": "Avatar video created successfully!", 
+#             "final_video_url": final_s3_url # <--- Frontend plays this!
+#         })
+
+#     except Exception as e:
+#         logger.exception("Error in /create-avatar-video endpoint")
+#         raise HTTPException(status_code=500, detail=str(e))
+#     finally:
+#         # --- TOTAL CLEANUP (Deletes current job AND previous voiceover job) ---
+#         logger.info("Starting comprehensive cleanup...")
+        
+#         # 1. Clean up Avatar folder
+#         if local_dir and os.path.exists(local_dir):
+#             try:
+#                 shutil.rmtree(local_dir)
+#                 logger.info(f"Deleted avatar temp dir: {local_dir}")
+#             except Exception as e:
+#                 logger.error(f"Failed to delete avatar dir: {e}")
+
+#         # 2. Clean up Voiceover folder (The previous step)
+#         if voiceover_dir and os.path.exists(voiceover_dir):
+#             try:
+#                 shutil.rmtree(voiceover_dir)
+#                 logger.info(f"Deleted voiceover temp dir: {voiceover_dir}")
+#             except Exception as e:
+#                 logger.error(f"Failed to delete voiceover dir: {e}")
+@app.post("/create-avatar-video")
+async def create_avatar_video(request: AvatarRequest): 
+    t_start = time.time()
+    local_dir = None
+    voiceover_dir = None 
+
+    # Extract values from the request body
+    sheetId = request.sheetId
+    heygen_api_key = request.heygenApiKey
+    avatar_id = request.avatarId
+
     try:
+        # Get filename from Sheet
+        try:
+            filename_resp = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='M1').execute()
+            filename = filename_resp['values'][0][0]
+        except (HttpError, KeyError, IndexError):
+            raise HTTPException(status_code=400, detail="Could not retrieve filename from sheet cell M1.")
+        
+        uid = filename.split('_')[-1].split('.')[0]
+        local_dir = f"./Data/tmp/{uid}_avatar"
+        voiceover_dir = f"./Data/tmp/{uid}" 
+        os.makedirs(local_dir, exist_ok=True)
+        
         t0 = time.time()
-        main_video_path = os.path.join(local_dir, filename)
-        download_file(f"Final_videos/{filename}", main_video_path)
+        main_video_path = os.path.join(local_dir, clean_filename)
+        
+        # 2. Download using the CLEAN key
+        download_file(f"Final_videos/{clean_filename}", main_video_path)
         log_performance("Avatar - Download Assets", t0)
 
         t1 = time.time()
         final_audio_s3_key = f"Final_audio/{uid}.wav"
-        AVATAR_ID = os.getenv("HEYGEN_AVATAR_ID", "Default_Avatar_ID_If_Not_Set") # Get from env
-        avatar_video_url = await generate_heygen_video(final_audio_s3_key, AVATAR_ID)
+        
+        # Generate HeyGen Video using the PASSED Credentials
+        avatar_video_url = await generate_heygen_video(final_audio_s3_key, avatar_id, heygen_api_key)
         
         avatar_video_path = os.path.join(local_dir, "avatar.mp4")
-        # Download the generated video
         logger.info(f"Downloading Heygen video from: {avatar_video_url}")
-        with requests.get(avatar_video_url, stream=True, timeout=300) as r: # Increased timeout
+        
+        with requests.get(avatar_video_url, stream=True, timeout=300) as r: 
             r.raise_for_status()
             with open(avatar_video_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
@@ -1576,31 +1770,28 @@ async def create_avatar_video(sheetId: str): # <--- API Contract: NOW ONLY NEEDS
         log_performance("Avatar - Download Heygen Video", t1)
 
         t2 = time.time()
-        output_path = os.path.join(local_dir, f"avatar_final_{filename}")
-        # Make the avatar smaller and place it bottom right
+        output_path = os.path.join(local_dir, f"avatar_final_{clean_filename}")
+        
+        # FFmpeg: Scale avatar and overlay
         ffmpeg_filter = (
-            "[1:v]scale=-1:240,format=rgba,geq=lum='p(X,Y)':a='if(lte(pow(X-W/2,2)+pow(Y-H/2,2),pow(min(W/2,H/2),2)),255,0)'[avatar_circular];" # Scale to 240px height, make circular
-            "[0:v][avatar_circular]overlay=main_w-overlay_w-30:main_h-overlay_h-30" # Place bottom right with 30px margin
+            "[1:v]scale=-1:240,format=rgba,geq=lum='p(X,Y)':a='if(lte(pow(X-W/2,2)+pow(Y-H/2,2),pow(min(W/2,H/2),2)),255,0)'[avatar_circular];" 
+            "[0:v][avatar_circular]overlay=main_w-overlay_w-30:main_h-overlay_h-30" 
         )
         run_ffmpeg(["ffmpeg", "-y", "-i", main_video_path, "-i", avatar_video_path, "-filter_complex", ffmpeg_filter, "-c:a", "copy", output_path], "Avatar Overlay Composition")
         log_performance("Avatar - FFmpeg Composition", t2)
         
-        # t3 = time.time()
-        # final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
-        # log_performance("Avatar - Upload Final Video", t3)
-        
-        # log_performance("Total /create-avatar-video", t_start)
-        # return JSONResponse({"message": "Avatar video created successfully!", "final_video_url": final_s3_info.get("url")})
         t3 = time.time()
-        final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
+        # Upload using Clean Filename
+        final_s3_key = f"Avatar_videos/{clean_filename}"
+        upload_file(output_path, final_s3_key)
         log_performance("Avatar - Upload Final Video", t3)
         
-        # --- GENERATE PRESIGNED URL (This makes it streamable) ---
+        # 3. Generate Presigned URL for the RESULT
         try:
             final_s3_url = s3.generate_presigned_url(
                 'get_object',
-                Params={'Bucket': S3_BUCKET, 'Key': f"Avatar_videos/{filename}"},
-                ExpiresIn=3600 # Valid for 1 hour
+                Params={'Bucket': S3_BUCKET, 'Key': final_s3_key},
+                ExpiresIn=3600
             )
         except Exception as e:
             logger.error(f"Failed to generate output presigned URL: {e}")
@@ -1608,20 +1799,20 @@ async def create_avatar_video(sheetId: str): # <--- API Contract: NOW ONLY NEEDS
             
         log_performance("Total /create-avatar-video", t_start)
         
-        # --- RETURN THE SIGNED URL ---
+        # 4. Return URL to Frontend
         return JSONResponse({
             "message": "Avatar video created successfully!", 
-            "final_video_url": final_s3_url # <--- Frontend plays this!
+            "final_video_url": final_s3_url 
         })
 
     except Exception as e:
         logger.exception("Error in /create-avatar-video endpoint")
         raise HTTPException(status_code=500, detail=str(e))
+    
     finally:
-        # --- TOTAL CLEANUP (Deletes current job AND previous voiceover job) ---
+        # --- TOTAL CLEANUP ---
         logger.info("Starting comprehensive cleanup...")
         
-        # 1. Clean up Avatar folder
         if local_dir and os.path.exists(local_dir):
             try:
                 shutil.rmtree(local_dir)
@@ -1629,7 +1820,6 @@ async def create_avatar_video(sheetId: str): # <--- API Contract: NOW ONLY NEEDS
             except Exception as e:
                 logger.error(f"Failed to delete avatar dir: {e}")
 
-        # 2. Clean up Voiceover folder (The previous step)
         if voiceover_dir and os.path.exists(voiceover_dir):
             try:
                 shutil.rmtree(voiceover_dir)
