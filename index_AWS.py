@@ -1748,6 +1748,7 @@ async def create_avatar_video(request: AvatarRequest):
         os.makedirs(local_dir, exist_ok=True)
         
         t0 = time.time()
+        clean_filename = filename.replace(" ", "_")
         main_video_path = os.path.join(local_dir, clean_filename)
         
         # 2. Download using the CLEAN key
