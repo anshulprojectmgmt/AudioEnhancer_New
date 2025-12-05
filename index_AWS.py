@@ -1821,12 +1821,12 @@ async def create_avatar_video(request: AvatarRequest):
             except Exception as e:
                 logger.error(f"Failed to delete avatar dir: {e}")
 
-        if voiceover_dir and os.path.exists(voiceover_dir):
-            try:
-                shutil.rmtree(voiceover_dir)
-                logger.info(f"Deleted voiceover temp dir: {voiceover_dir}")
-            except Exception as e:
-                logger.error(f"Failed to delete voiceover dir: {e}")
+        # if voiceover_dir and os.path.exists(voiceover_dir):
+        #     try:
+        #         shutil.rmtree(voiceover_dir)
+        #         logger.info(f"Deleted voiceover temp dir: {voiceover_dir}")
+        #     except Exception as e:
+        #         logger.error(f"Failed to delete voiceover dir: {e}")
 
 # Add a root endpoint for basic check
 @app.get("/")
