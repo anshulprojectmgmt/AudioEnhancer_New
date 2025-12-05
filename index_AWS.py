@@ -1420,15 +1420,19 @@ async def refresh_voiceover(sheetId: str):
         upload_file(final_audio_path, f"Final_audio/{uid}.wav")
         log_performance("Upload Final Assets to S3", t5)
         
-        # 3. GENERATE PRESIGNED URL
+        # 3. GENERATE PRESIGNED URL (FORCE DOWNLOAD VERSION)
         try:
             final_s3_url = s3.generate_presigned_url(
                 'get_object',
-                Params={'Bucket': S3_BUCKET, 'Key': final_video_key},
-                ExpiresIn=3600 # Valid for 1 hour
+                Params={
+                    'Bucket': S3_BUCKET, 
+                    'Key': final_video_key,
+                    'ResponseContentDisposition': f'attachment; filename="{clean_filename}"' # <--- THIS FORCES DOWNLOAD
+                },
+                ExpiresIn=3600 
             )
         except Exception as e:
-            print(f"ERROR GENERATING URL: {e}", flush=True) # FORCE PRINT
+            logger.error(f"Failed to generate presigned URL: {e}")
             final_s3_url = ""
 
         # 4. >>> FORCE PRINT URL <<<
@@ -1799,10 +1803,15 @@ async def create_avatar_video(request: AvatarRequest):
         log_performance("Avatar - Upload Final Video", t3)
         
         # 3. Generate Presigned URL for the RESULT
+        # 3. Generate Presigned URL (FORCE DOWNLOAD VERSION)
         try:
             final_s3_url = s3.generate_presigned_url(
                 'get_object',
-                Params={'Bucket': S3_BUCKET, 'Key': final_s3_key},
+                Params={
+                    'Bucket': S3_BUCKET, 
+                    'Key': final_s3_key,
+                    'ResponseContentDisposition': f'attachment; filename="avatar_{filename}"' # <--- THIS FORCES DOWNLOAD
+                },
                 ExpiresIn=3600
             )
         except Exception as e:
