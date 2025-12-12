@@ -1,7 +1,7 @@
 # =========================================================================================================
 #                    IMPORTS & INITIAL SETUP
 # =========================================================================================================
-import time, logging, shutil, subprocess, os, json, uuid, warnings, boto3, pandas, requests, re, asyncio, psutil
+import time, logging, shutil, subprocess, os, json, uuid, warnings, boto3, pandas, requests, re, asyncio, psutil , csv 
 import aiohttp # <--- Added for async HTTP requests
 from itertools import chain
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource
 import google.generativeai as genai
 from pydantic import BaseModel
+from datetime import datetime
 import gc 
 # import torch # <-- Removed torch (unless needed elsewhere)
 # import multiprocessing # <-- Removed multiprocessing
@@ -143,7 +144,7 @@ def call_gemini(prompt: str) -> str:
     model = genai.GenerativeModel("gemini-2.5-flash")
     return model.generate_content(prompt).text.strip()
 
-# def tts_worker_init(...): # <-- Removed
+
 
 # (get_media_duration, create_word_highlighted_ass remain the same)
 def get_media_duration(path: str) -> float:
@@ -551,6 +552,17 @@ async def process_video(file: UploadFile = File(...)):
         drive_service.permissions().create(fileId=sheet_id, body={'type': 'anyone', 'role': 'writer'}).execute()
         sheets_service.spreadsheets().values().update(spreadsheetId=sheet_id, range='A1', valueInputOption='RAW', body={'values': rows}).execute()
         sheets_service.spreadsheets().values().update(spreadsheetId=sheet_id, range='M1', valueInputOption='RAW', body={'values': [[filename]]}).execute()
+        log_file_path = "sheets_log.csv"
+        current_time = datetime.now().isoformat() # e.g., '2025-12-12T10:00:00.123456'
+        
+        try:
+            with open(log_file_path, "a", newline="") as f:
+                writer = csv.writer(f)
+                # Save ID and Creation Time
+                writer.writerow([sheet_id, current_time])
+        except Exception as e:
+            logger.error(f"Failed to log sheet for cleanup: {e}")
+        
         log_performance("Google Sheet Creation", t4)
 
         t5 = time.time()
