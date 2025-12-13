@@ -5,11 +5,11 @@ import time, logging, shutil, subprocess, os, json, uuid, warnings, boto3, panda
 import aiohttp # <--- Added for async HTTP requests
 from itertools import chain
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from google.oauth2.credentials import Credentials
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource
 import google.generativeai as genai
@@ -84,11 +84,23 @@ app.add_middleware(
 # --- Service Clients Setup (Google, AWS, Gemini) ---
 # (Remains the same)
 genai.configure(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-sa_info = json.loads(os.getenv("GOOGLE_SA_JSON"))
-credentials = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+# 1. Load the token JSON from .env
+token_json = os.getenv("GOOGLE_OAUTH_TOKEN")
+
+if not token_json:
+    raise ValueError("❌ Error: GOOGLE_OAUTH_TOKEN not found in .env")
+
+# 2. Parse it into a dictionary
+token_info = json.loads(token_json)
+
+# 3. Create credentials from the dictionary
+credentials = Credentials.from_authorized_user_info(token_info, SCOPES)
+
+# 4. Build services (The rest of your code uses these variables)
 sheets_service = build('sheets', 'v4', credentials=credentials, cache_discovery=False)
 drive_service = build('drive', 'v3', credentials=credentials)
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+
 s3 = boto3.client(
     "s3",
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
