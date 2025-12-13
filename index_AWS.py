@@ -83,6 +83,8 @@ app.add_middleware(
 
 # --- Service Clients Setup (Google, AWS, Gemini) ---
 # (Remains the same)
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+
 genai.configure(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
 # 1. Load the token JSON from .env
 token_json = os.getenv("GOOGLE_OAUTH_TOKEN")
@@ -99,7 +101,7 @@ credentials = Credentials.from_authorized_user_info(token_info, SCOPES)
 # 4. Build services (The rest of your code uses these variables)
 sheets_service = build('sheets', 'v4', credentials=credentials, cache_discovery=False)
 drive_service = build('drive', 'v3', credentials=credentials)
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+
 
 s3 = boto3.client(
     "s3",
