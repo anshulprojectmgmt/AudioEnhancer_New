@@ -99,7 +99,7 @@ credentials = Credentials.from_authorized_user_info(token_info, SCOPES)
 # 4. Build services (The rest of your code uses these variables)
 sheets_service = build('sheets', 'v4', credentials=credentials, cache_discovery=False)
 drive_service = build('drive', 'v3', credentials=credentials)
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 s3 = boto3.client(
     "s3",
