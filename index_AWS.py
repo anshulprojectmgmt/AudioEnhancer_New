@@ -16,10 +16,6 @@ import google.generativeai as genai
 from pydantic import BaseModel
 from datetime import datetime
 import gc 
-# import torch # <-- Removed torch (unless needed elsewhere)
-# import multiprocessing # <-- Removed multiprocessing
-# import concurrent.futures # <-- Removed concurrent.futures
-# from voice_clone.src.chatterbox.tts import tts_generate_segment , get_tts_model # <-- Removed local TTS imports
 import base64 # <-- Added for encoding audio
 
 # --- Load Environment Variables ---
@@ -82,7 +78,6 @@ app.add_middleware(
 )
 
 # --- Service Clients Setup (Google, AWS, Gemini) ---
-# (Remains the same)
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 genai.configure(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
@@ -212,9 +207,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     with open(ass_path, 'w', encoding='utf-8') as f:
         f.write(header + "\n".join(events))
 
-# (process_segments_with_ffmpeg remains the same - it uses the generated audio paths)
 def process_segments_with_ffmpeg(segments, input_path, output_path, ass_path, tmp_base):
-    # (Function content remains the same)
     t0 = time.time()
     tmp_audio = os.path.join(tmp_base, "audio.wav")
     
@@ -368,8 +361,9 @@ def create_avatar_only_audio(segments, output_path):
     run_ffmpeg(cmd, "Avatar Audio Smart Stitching")
     log_performance("Avatar Audio Generation (Smart Stitching)", t0)
     return output_path
+    
 # =========================================================================================================
-#                    NEW RUNPOD TTS HELPER FUNCTION 
+#                         RUNPOD TTS HELPER FUNCTION 
 # =========================================================================================================
 
 async def call_runpod_tts(session: aiohttp.ClientSession, semaphore: asyncio.Semaphore, text: str, ref_audio_b64: str, output_path: str, segment_index: int):
@@ -454,13 +448,11 @@ class UploadRequest(BaseModel):
 # =========================================================================================================
 #                    ENDPOINT 1: /process-video
 # =========================================================================================================
-# (Remains the same - no TTS here
-
 
 
 @app.post("/process-video")
 async def process_video(file: UploadFile = File(...)):
-    # (Function content remains the same)
+
     t_start = time.time()
     uid = str(uuid.uuid4())
     filename = f"{os.path.splitext(file.filename)[0]}_{uid}.mp4"
@@ -488,6 +480,7 @@ async def process_video(file: UploadFile = File(...)):
         options = PrerecordedOptions(model="nova-3", smart_format=True, diarize=True)
         response = deepgram_client.listen.rest.v("1").transcribe_file(payload, options, timeout=300)
         dg_data = json.loads(response.to_json())
+        
         log_performance("Deepgram Transcription", t2)
         
         paragraphs = []
@@ -590,7 +583,6 @@ async def process_video(file: UploadFile = File(...)):
         logger.exception("Error in /process-video endpoint")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     finally:
-        # Cleanup *select* temporary files, preserving the cache
         try:
             # We want to delete the large, single files
             files_to_delete = [
@@ -616,300 +608,9 @@ async def process_video(file: UploadFile = File(...)):
 
 
 
-# # =========================================================================================================
-# #                    ENDPOINT 2: /refresh-voiceover (FINAL FIXED VERSION)
-# # =========================================================================================================
-# @app.post("/refresh-voiceover")
-# async def refresh_voiceover(sheetId: str): 
-#     t_start = time.time()
-#     local_dir = None
-    
-#     local_video_path = None
-#     final_video_path = None
-#     final_audio_path = None
-#     ass_path = None
-#     state_csv_path = None 
-
-#     try:
-#         t0 = time.time()
-#         # --- Setup: Get filename, create directories ---
-#         try:
-#             filename_resp = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='M1').execute()
-#             filename = filename_resp['values'][0][0]
-#         except (HttpError, KeyError, IndexError):
-#             raise HTTPException(status_code=400, detail="Could not retrieve filename from sheet cell M1.")
-
-#         uid = filename.split('_')[-1].split('.')[0]
-#         local_dir = f"./Data/tmp/{uid}"
-#         os.makedirs(local_dir, exist_ok=True)
-        
-#         # --- Assign paths ---
-#         local_video_path = os.path.join(local_dir, filename)
-#         cloned_audio_dir = os.path.join(local_dir, "cloned")
-#         os.makedirs(cloned_audio_dir, exist_ok=True)
-#         ass_path = os.path.join(local_dir, "captions.ass")
-#         state_csv_path = os.path.join(local_dir, "state.csv") 
-            
-#         download_file(f"Original_videos/{filename}", local_video_path)
-#         log_performance("Setup & Download", t0)
-        
-#         # --- Reference Audio (Use a short clip!) ---
-#         base_dir = os.path.abspath(os.path.dirname(__file__))
-#         ref_audio_path = os.path.join(base_dir, "reference_audio.wav") 
-        
-#         if not os.path.exists(ref_audio_path):
-#             logger.error(f"FATAL: Reference audio not found at {ref_audio_path}")
-#             raise HTTPException(status_code=500, detail="Reference audio file is missing from the server.")
-        
-#         # --- FIX: Encode Audio ONCE here ---
-#         ref_audio_b64 = ""
-#         try:
-#             with open(ref_audio_path, 'rb') as audio_file:
-#                 audio_bytes = audio_file.read()
-#                 ref_audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
-#             logger.info("Reference audio encoded successfully (Once).")
-#         except Exception as e:
-#             logger.error(f"Failed to encode reference audio: {e}")
-#             raise HTTPException(status_code=500, detail=f"Failed to encode reference audio: {e}")
-
-#         # --- Caching Logic ---
-#         prev_state = {}
-#         if os.path.exists(state_csv_path):
-#             logger.info(f"Loading state from {state_csv_path}")
-#             try:
-#                 df = pandas.read_csv(state_csv_path)
-#                 for _, row in df.iterrows():
-#                     idx = int(row['Index'])
-#                     prev_state[idx] = {
-#                         'refined': str(row['Refined']),
-#                         'pause': str(row['Pause']),
-#                         'CloneVoice': str(row.get('CloneVoice', 'yes'))  
-#                     }
-#             except Exception as e:
-#                 logger.error(f"Error loading state CSV: {e}")
-
-#         t1 = time.time()
-#         rows = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='A2:L').execute().get('values', [])
-        
-#         # --- RunPod TTS Generation (Batched & Concurrent) ---
-#         if not RUNPOD_API_KEY or not RUNPOD_ENDPOINT_URL:
-#              raise HTTPException(status_code=500, detail="RunPod API Key or Endpoint URL not configured.")
-             
-#         semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNPOD_REQUESTS)
-        
-#         async with aiohttp.ClientSession() as session:
-#             pending_tasks = []
-            
-#             # 1. PREPARE TASKS (Do not run them yet)
-#             for idx, row in enumerate(rows):
-#                 while len(row) <= 10: row.append("") 
-#                 refined = row[5]
-#                 pause = row[6] if row[6] else '0'
-#                 clonevoice = row[10] if row[10] else 'yes'
-                
-#                 output_audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
-
-#                 # Check Cache
-#                 unchanged = False
-#                 if idx in prev_state:
-#                     prev = prev_state[idx]
-#                     unchanged = (str(refined) == str(prev['refined']) and 
-#                                  str(pause) == str(prev['pause']) and 
-#                                  str(clonevoice) == str(prev.get('CloneVoice', 'yes')))
-
-#                 if unchanged:
-#                     logger.info(f"[Cache] Segment {idx} is UNCHANGED. Skipping.")
-#                     continue 
-
-#                 logger.info(f"[Cache] Segment {idx} is NEW or CHANGED.")
-
-#                 if os.path.exists(output_audio_path):
-#                     os.remove(output_audio_path)
-
-#                 if refined and clonevoice.lower() == "yes":
-#                     # Create the coroutine object, but do not await it yet
-#                     task = call_runpod_tts(session, semaphore, text=refined, ref_audio_b64=ref_audio_b64, output_path=output_audio_path, segment_index=idx)
-#                     pending_tasks.append(task)
-            
-#             # 2. EXECUTE IN BATCHES (Prevents Memory Spikes)
-#             BATCH_SIZE = 5
-#             total_tasks = len(pending_tasks)
-#             global_success_count = 0
-            
-#             logger.info(f"Queued {total_tasks} tasks. Processing in batches of {BATCH_SIZE}...")
-
-#             for i in range(0, total_tasks, BATCH_SIZE):
-#                 batch = pending_tasks[i : i + BATCH_SIZE]
-#                 logger.info(f"--- Processing Batch {i//BATCH_SIZE + 1} ({len(batch)} tasks) ---")
-                
-#                 # Run this batch and wait for it to finish
-#                 results = await asyncio.gather(*batch)
-                
-#                 # Count successes in this batch
-#                 batch_success = sum(1 for res in results if res is True)
-#                 global_success_count += batch_success
-                
-#                 logger.info(f"Batch {i//BATCH_SIZE + 1} complete. Success: {batch_success}/{len(batch)}")
-                
-#                 # CRITICAL: Force memory cleanup after every batch
-#                 gc.collect()
-
-#             # --- FINAL REPORT ---
-#             total_failed = total_tasks - global_success_count
-#             logger.info(f"RunPod TTS generation complete. Total Success: {global_success_count}, Total Failed: {total_failed}")
-#             if total_failed > 0:
-#                  logger.error(f"{total_failed} TTS segments failed to generate via RunPod.")
-        
-#         log_performance("RunPod TTS Generation (Batched)", t1)
-        
-#         # --- Timestamp calculation and segment processing ---
-#         t2 = time.time()
-#         segments = []
-#         current_new_start = 0.0
-#         for idx, row in enumerate(rows):
-#             try:
-#                 while len(row) <= 10: row.append("") 
-#                 start = float(row[0]) if row[0] else 0.0
-#                 end = float(row[1]) if row[1] else start
-#                 refined = row[5]
-#                 pause = float(row[6]) if row[6] else 0.0
-#                 clone_voice = row[10]
-#                 video_len = max(0, end - start)
-#                 audio_path = None
-#                 factor = 1.0
-#                 audio_len_sec = video_len
-#                 is_cloned = (clone_voice.lower() == "yes")
-
-#                 if clone_voice.lower() == "no":
-#                     audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
-#                     if not os.path.exists(audio_path) and video_len > 0:
-#                          run_ffmpeg(["ffmpeg", "-y", "-ss", str(start), "-i", local_video_path, "-t", str(video_len), "-q:a", "0", "-map", "a", audio_path], f"Audio Extraction for seg {idx}")
-#                     elif not os.path.exists(audio_path) and video_len <= 0:
-#                          run_ffmpeg(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "0.01", "-acodec", "pcm_s16le", audio_path], f"Silent Audio for seg {idx}")
-                         
-#                 elif refined:
-#                     audio_path = os.path.join(cloned_audio_dir, f"seg_{idx}.wav")
-#                     if os.path.exists(audio_path):
-#                         audio_len_sec = get_media_duration(audio_path) + pause
-#                         if audio_len_sec > 0 and video_len > 0:
-#                             factor = min(video_len / audio_len_sec, 2.0)
-#                         elif video_len <= 0:
-#                              factor = float('inf')
-#                              audio_len_sec = 0
-#                     else:
-#                         logger.warning(f"Cloned audio for seg {idx} not found. Using original timing.")
-#                         audio_len_sec = video_len
-
-#                 segment_duration = (video_len / factor) if factor > 0 and factor != float('inf') else 0.0
-#                 new_end = current_new_start + segment_duration
-#                 row[2], row[3] = f"{current_new_start:.3f}", f"{new_end:.3f}"
-#                 current_new_start = new_end
-#                 row[7] = f"{audio_len_sec:.3f}"
-#                 row[8] = f"{video_len:.3f}"
-#                 segments.append({"start": start, "end": end, "factor": factor, "audio_path": audio_path, "path": local_video_path,"is_cloned": is_cloned})
-#             except (ValueError, IndexError, TypeError) as e:
-#                 logger.warning(f"Skipping malformed row {idx+2} during segment processing: {row} | Error: {e}")
-
-#         log_performance("Timestamp Calculation", t2)
-        
-#         # --- Save current state to CSV ---
-#         state_data = []
-#         for idx, row in enumerate(rows):
-#             state_data.append({
-#                 "Index": idx,
-#                 "Refined": row[5] if len(row) > 5 else "",
-#                 "Pause": row[6] if len(row) > 6 else "0",
-#                 "CloneVoice": row[10] if len(row) > 10 else "yes"  
-#             })
-#         state_df = pandas.DataFrame(state_data)
-#         logger.info(f"Saving new state to {state_csv_path}")
-#         state_df.to_csv(state_csv_path, index=False)
-        
-#         # --- Final video/audio processing ---
-#         t3 = time.time()
-#         final_video_path = os.path.join(local_dir, f"final_{filename}") 
-#         processed_path, final_audio_path = process_segments_with_ffmpeg(segments, local_video_path, final_video_path, ass_path, local_dir) 
-#         # +++ NEW: Generate Avatar-Specific Audio (With Silence) +++
-#         avatar_audio_local_path = os.path.join(local_dir, "avatar_audio_input.wav")
-#         create_avatar_only_audio(segments, avatar_audio_local_path)
-#         # +++ END NEW +++
-#         log_performance("Final Video/Audio Processing", t3)
-
-#         # --- Update Google Sheet ---
-#         t4 = time.time()
-#         rows_str = [[str(cell) for cell in r] for r in rows]
-#         sheets_service.spreadsheets().values().update(spreadsheetId=sheetId, range='A2', valueInputOption='RAW', body={'values': rows_str}).execute()
-#         log_performance("Google Sheet Update", t4)
-
-#         # --- Upload final files ---
-#         t5 = time.time()
-        
-#         # 1. Sanitize filename (Crucial: Replace spaces with underscores)
-#         clean_filename = filename.replace(" ", "_")
-#         final_video_key = f"Final_videos/{clean_filename}"
-        
-#         # 2. Upload using the CLEAN key
-#         upload_file(processed_path, final_video_key)
-#         upload_file(final_audio_path, f"Final_audio/{uid}.wav")
-#         upload_file(avatar_audio_local_path, f"Final_audio_avatar/{uid}.wav")
-#         log_performance("Upload Final Assets to S3", t5)
-        
-#         # 3. GENERATE PRESIGNED URL (FORCE DOWNLOAD VERSION)
-#         try:
-#             final_s3_url = s3.generate_presigned_url(
-#                 'get_object',
-#                 Params={
-#                     'Bucket': S3_BUCKET, 
-#                     'Key': final_video_key,
-#                     'ResponseContentDisposition': f'attachment; filename="{clean_filename}"' # <--- THIS FORCES DOWNLOAD
-#                 },
-#                 ExpiresIn=3600 
-#             )
-#         except Exception as e:
-#             logger.error(f"Failed to generate presigned URL: {e}")
-#             final_s3_url = ""
-
-#         # 4. >>> FORCE PRINT URL <<<
-#         print("\n" + "="*60, flush=True)
-#         print("✅ DEBUG: FINAL S3 URL GENERATED:", flush=True)
-#         print(final_s3_url, flush=True)
-#         print("="*60 + "\n", flush=True)
-
-#         log_performance("Total /refresh-voiceover", t_start)
-        
-#         # 5. Return to Frontend
-#         return JSONResponse({
-#             "message": "Refresh completed successfully", 
-#             "processed_video": clean_filename,
-#             "Final_s3_url": final_s3_url 
-#         })
-
-#     except Exception as e:
-#         logger.exception("Error in /refresh-voiceover endpoint")
-#         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-    
-#     finally:
-#         # --- Clean up ---
-#         logger.info("Starting selective cleanup...")
-#         try:
-#             files_to_delete = [
-#                 local_video_path,   
-#                 final_video_path,   
-#                 final_audio_path,   
-#                 ass_path            
-#             ]
-            
-#             for f_path in files_to_delete:
-#                 if f_path and os.path.exists(f_path):
-#                     os.remove(f_path)
-#                     logger.info(f"Cleaned up temp file: {f_path}")
-
-#         except Exception as e:
-#             logger.error(f"Error during selective cleanup: {e}")
-
 
 # =========================================================================================================
-#                    ENDPOINT 2: /refresh-voiceover (UPDATED FOR CUSTOM VOICE)
+#                    ENDPOINT 2: /refresh-voiceover
 # =========================================================================================================
 @app.post("/refresh-voiceover")
 async def refresh_voiceover(sheetId: str, voice_mode: str = "default"): 
@@ -1123,7 +824,7 @@ async def refresh_voiceover(sheetId: str, voice_mode: str = "default"):
         upload_file(avatar_audio_local_path, f"Final_audio_avatar/{uid}.wav")
         log_performance("Upload Final Assets", t5)
         
-        # --- Presigned URL (Force Download) ---
+        # --- Presigned URL ---
         try:
             final_s3_url = s3.generate_presigned_url(
                 'get_object',
@@ -1172,67 +873,6 @@ class AvatarRequest(BaseModel):
     sheetId: str
     heygenApiKey: str
     avatarId: str
-
-# async def generate_heygen_video(audio_s3_key: str, avatar_id: str):
-#     t_start = time.time()
-#     HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY")
-#     if not HEYGEN_API_KEY:
-#         raise HTTPException(status_code=500, detail="HEYGEN_API_KEY is not set.")
-
-#     headers = {"X-Api-Key": HEYGEN_API_KEY, "Content-Type": "application/json"}
-    
-#     # Create a pre-signed URL for Heygen to access the audio from S3
-#     audio_url = s3.generate_presigned_url('get_object', Params={'Bucket': S3_BUCKET, 'Key': audio_s3_key}, ExpiresIn=3600)
-#     log_performance("Heygen - Generate Presigned URL", t_start)
-
-#     t1 = time.time()
-#     generate_payload = {
-#         "video_inputs": [{
-#             "character": {"type": "avatar", "avatar_id": avatar_id, "avatar_style": "normal"},
-#             "voice": {"type": "audio", "audio_url": audio_url},
-#             "background": {"type": "color", "value": "#00FF00"} # Green screen
-#         }],
-#         "dimension": {"width": 960 , "height": 540}, # Specify dimensions if needed
-#         "test": True # Use test mode if needed
-#     }
-    
-#     generate_response = requests.post("https://api.heygen.com/v2/video/generate", headers=headers, json=generate_payload)
-#     if generate_response.status_code != 200:
-#         raise HTTPException(status_code=generate_response.status_code, detail=f"Heygen video generation failed to start: {generate_response.text}")
-#     video_id = generate_response.json()["data"]["video_id"]
-#     log_performance("Heygen - Start Video Generation", t1)
-
-#     t2 = time.time()
-#     status_url = f"https://api.heygen.com/v1/video_status.get?video_id={video_id}"
-#     video_download_url = None
-#     # Poll for status (consider increasing timeout or retries)
-#     for _ in range(60): # Poll for up to 15 minutes (60 * 15 seconds)
-#         await asyncio.sleep(15) 
-#         try:
-#              status_response = requests.get(status_url, headers={"X-Api-Key": HEYGEN_API_KEY}, timeout=30)
-#              status_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-#              status_data = status_response.json().get("data", {})
-#              current_status = status_data.get('status')
-#              logger.info(f"Heygen video {video_id} status: {current_status}")
-#              if current_status in ["succeeded", "completed"]:
-#                  video_download_url = status_data.get("video_url")
-#                  if video_download_url:
-#                      break
-#                  else:
-#                      logger.warning(f"Heygen status succeeded but video_url is missing: {status_data}")
-#                      # Optionally retry or handle this case
-#              elif current_status == "failed":
-#                  raise HTTPException(status_code=500, detail=f"Heygen video failed: {status_data.get('error')}")
-#         except requests.exceptions.RequestException as e:
-#             logger.error(f"Error polling Heygen status: {e}. Retrying...")
-#         except Exception as e: # Catch other potential errors
-#              logger.error(f"Unexpected error during Heygen status polling: {e}")
-#              # Decide if this should be fatal or retried
-    
-#     if not video_download_url:
-#         raise HTTPException(status_code=500, detail="Heygen video generation timed out or failed to get URL.")
-#     log_performance("Heygen - Poll for Status", t2)
-#     return video_download_url
 
 async def generate_heygen_video(audio_s3_key: str, avatar_id: str, api_key: str):
     t_start = time.time()
@@ -1313,105 +953,6 @@ async def generate_heygen_video(audio_s3_key: str, avatar_id: str, api_key: str)
     log_performance("Heygen - Poll for Status", t2)
     return video_download_url
 
-# @app.post("/create-avatar-video")
-# async def create_avatar_video(sheetId: str): # <--- API Contract: NOW ONLY NEEDS sheetId
-#     t_start = time.time()
-
-#     # +++ ADD THIS BLOCK +++
-#     # Get the filename from the sheet, just like /refresh-voiceover does
-#     try:
-#         filename_resp = sheets_service.spreadsheets().values().get(spreadsheetId=sheetId, range='M1').execute()
-#         filename = filename_resp['values'][0][0]
-#     except (HttpError, KeyError, IndexError):
-#         raise HTTPException(status_code=400, detail="Could not retrieve filename from sheet cell M1.")
-#     # +++ END OF BLOCK +++
-
-#     uid = filename.split('_')[-1].split('.')[0]
-#     local_dir = f"./Data/tmp/{uid}_avatar"
-#     os.makedirs(local_dir, exist_ok=True)
-    
-#     try:
-#         t0 = time.time()
-#         main_video_path = os.path.join(local_dir, filename)
-#         download_file(f"Final_videos/{filename}", main_video_path)
-#         log_performance("Avatar - Download Assets", t0)
-
-#         t1 = time.time()
-#         final_audio_s3_key = f"Final_audio/{uid}.wav"
-#         AVATAR_ID = os.getenv("HEYGEN_AVATAR_ID", "Default_Avatar_ID_If_Not_Set") # Get from env
-#         avatar_video_url = await generate_heygen_video(final_audio_s3_key, AVATAR_ID)
-        
-#         avatar_video_path = os.path.join(local_dir, "avatar.mp4")
-#         # Download the generated video
-#         logger.info(f"Downloading Heygen video from: {avatar_video_url}")
-#         with requests.get(avatar_video_url, stream=True, timeout=300) as r: # Increased timeout
-#             r.raise_for_status()
-#             with open(avatar_video_path, 'wb') as f:
-#                 for chunk in r.iter_content(chunk_size=8192):
-#                      f.write(chunk)
-#         log_performance("Avatar - Download Heygen Video", t1)
-
-#         t2 = time.time()
-#         output_path = os.path.join(local_dir, f"avatar_final_{filename}")
-#         # Make the avatar smaller and place it bottom right
-#         ffmpeg_filter = (
-#             "[1:v]scale=-1:240,format=rgba,geq=lum='p(X,Y)':a='if(lte(pow(X-W/2,2)+pow(Y-H/2,2),pow(min(W/2,H/2),2)),255,0)'[avatar_circular];" # Scale to 240px height, make circular
-#             "[0:v][avatar_circular]overlay=main_w-overlay_w-30:main_h-overlay_h-30" # Place bottom right with 30px margin
-#         )
-#         run_ffmpeg(["ffmpeg", "-y", "-i", main_video_path, "-i", avatar_video_path, "-filter_complex", ffmpeg_filter, "-c:a", "copy", output_path], "Avatar Overlay Composition")
-#         log_performance("Avatar - FFmpeg Composition", t2)
-        
-#         # t3 = time.time()
-#         # final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
-#         # log_performance("Avatar - Upload Final Video", t3)
-        
-#         # log_performance("Total /create-avatar-video", t_start)
-#         # return JSONResponse({"message": "Avatar video created successfully!", "final_video_url": final_s3_info.get("url")})
-#         t3 = time.time()
-#         final_s3_info = upload_file(output_path, f"Avatar_videos/{filename}")
-#         log_performance("Avatar - Upload Final Video", t3)
-        
-#         # --- GENERATE PRESIGNED URL (This makes it streamable) ---
-#         try:
-#             final_s3_url = s3.generate_presigned_url(
-#                 'get_object',
-#                 Params={'Bucket': S3_BUCKET, 'Key': f"Avatar_videos/{filename}"},
-#                 ExpiresIn=3600 # Valid for 1 hour
-#             )
-#         except Exception as e:
-#             logger.error(f"Failed to generate output presigned URL: {e}")
-#             final_s3_url = ""
-            
-#         log_performance("Total /create-avatar-video", t_start)
-        
-#         # --- RETURN THE SIGNED URL ---
-#         return JSONResponse({
-#             "message": "Avatar video created successfully!", 
-#             "final_video_url": final_s3_url # <--- Frontend plays this!
-#         })
-
-#     except Exception as e:
-#         logger.exception("Error in /create-avatar-video endpoint")
-#         raise HTTPException(status_code=500, detail=str(e))
-#     finally:
-#         # --- TOTAL CLEANUP (Deletes current job AND previous voiceover job) ---
-#         logger.info("Starting comprehensive cleanup...")
-        
-#         # 1. Clean up Avatar folder
-#         if local_dir and os.path.exists(local_dir):
-#             try:
-#                 shutil.rmtree(local_dir)
-#                 logger.info(f"Deleted avatar temp dir: {local_dir}")
-#             except Exception as e:
-#                 logger.error(f"Failed to delete avatar dir: {e}")
-
-#         # 2. Clean up Voiceover folder (The previous step)
-#         if voiceover_dir and os.path.exists(voiceover_dir):
-#             try:
-#                 shutil.rmtree(voiceover_dir)
-#                 logger.info(f"Deleted voiceover temp dir: {voiceover_dir}")
-#             except Exception as e:
-#                 logger.error(f"Failed to delete voiceover dir: {e}")
 @app.post("/create-avatar-video")
 async def create_avatar_video(request: AvatarRequest): 
     t_start = time.time()
@@ -1488,7 +1029,7 @@ async def create_avatar_video(request: AvatarRequest):
         log_performance("Avatar - Upload Final Video", t3)
         
         # 3. Generate Presigned URL for the RESULT
-        # 3. Generate Presigned URL (FORCE DOWNLOAD VERSION)
+
         try:
             final_s3_url = s3.generate_presigned_url(
                 'get_object',
@@ -1526,12 +1067,7 @@ async def create_avatar_video(request: AvatarRequest):
             except Exception as e:
                 logger.error(f"Failed to delete avatar dir: {e}")
 
-        # if voiceover_dir and os.path.exists(voiceover_dir):
-        #     try:
-        #         shutil.rmtree(voiceover_dir)
-        #         logger.info(f"Deleted voiceover temp dir: {voiceover_dir}")
-        #     except Exception as e:
-        #         logger.error(f"Failed to delete voiceover dir: {e}")
+
 
 
 # =========================================================================================================
@@ -1566,8 +1102,7 @@ async def get_upload_url(request: UploadRequest):
 def read_root():
     return {"message": "Audio Enhancer API is running"}
 
-# If running directly (e.g., uvicorn index_runpod:app --reload)
-# Note: This part is usually not needed if deploying via Docker/RunPod CMD
+
 
 
 import uvicorn
