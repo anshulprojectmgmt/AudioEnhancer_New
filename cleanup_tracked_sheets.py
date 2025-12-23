@@ -2,14 +2,16 @@ import csv
 import os
 import json
 from datetime import datetime, timedelta
-from google.oauth2 import service_account # Updated for cleaner env handling
+from google.oauth2.credentials import Credentials  # ✅ Changed to standard Credentials
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
 load_dotenv() # Load variables from .env
-LOG_FILE = '/home/ubuntu/AudioEnhancer_New/sheets_log.csv' # Use Absolute Path
+LOG_FILE = '/home/ubuntu/AudioEnhancer_New/sheets_log.csv'
+TOKEN_FILE = '/home/ubuntu/AudioEnhancer_New/token.json' # ✅ Path to your fixed token
 DAYS_TO_KEEP = 1
+SCOPES = ['https://www.googleapis.com/auth/drive'] # We only need Drive scope for deletion
 # ---------------------
 
 def delete_tracked_sheets():
@@ -17,20 +19,14 @@ def delete_tracked_sheets():
         print("No log file found. Nothing to clean.")
         return
 
-    # 1. Load Credentials from ENV (Not file)
-    json_creds = os.getenv("GOOGLE_SA_JSON") # <--- CHECK THIS NAME IN YOUR .ENV
-    
-    if not json_creds:
-        print("❌ Error: GOOGLE_SA_JSON not found in .env")
+    # 1. Load Credentials from token.json (✅ NEW OAUTH METHOD)
+    if not os.path.exists(TOKEN_FILE):
+        print(f"❌ Error: Token file not found at {TOKEN_FILE}")
         return
 
     try:
-        # Parse the string into a dictionary
-        creds_dict = json.loads(json_creds)
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict, 
-            scopes=['https://www.googleapis.com/auth/drive']
-        )
+        # This automatically handles the refresh token logic if needed
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
         service = build('drive', 'v3', credentials=creds)
     except Exception as e:
         print(f"❌ Auth Error: {e}")
@@ -50,7 +46,7 @@ def delete_tracked_sheets():
 
     for row in all_rows:
         if len(row) < 2: continue
-            
+
         sheet_id, created_at_str = row
         try:
             created_at = datetime.fromisoformat(created_at_str)
